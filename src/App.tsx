@@ -46,6 +46,15 @@ type TrailPoint = {
   y: number;
 };
 
+type Point = {
+  x: number;
+  y: number;
+};
+
+type OrientedRect = {
+  points: Point[];
+};
+
 type ShadowSnapshot = Player & {
   time: number;
   worldX: number;
@@ -59,13 +68,14 @@ type ModificationSettings = {
   upsideDown: boolean;
   splitMode: boolean;
   shadow: boolean;
+  showHitboxes: boolean;
 };
 
 const MODES: Array<{ id: Mode; title: string; subtitle: string }> = [
   { id: 'wave', title: 'Волна', subtitle: 'резкие диагонали' },
   { id: 'flipWave', title: 'Flip Wave', subtitle: 'переключение направления' },
   { id: 'laser', title: 'Вектор', subtitle: 'скоростной плавный полёт' },
-  { id: 'orbit', title: 'Орбита', subtitle: 'вращение по синусоиде' },
+  { id: 'orbit', title: 'Орбита', subtitle: 'вращение по пунктирной орбите' },
   { id: 'ship', title: 'Корабль', subtitle: 'плавный полёт' },
   { id: 'ufo', title: 'UFO', subtitle: 'прыжки в воздухе' },
 ];
@@ -104,6 +114,7 @@ const DEFAULT_MODIFICATIONS: ModificationSettings = {
   upsideDown: false,
   splitMode: false,
   shadow: false,
+  showHitboxes: false,
 };
 
 const COLOR_PALETTE: Array<{ title: string; value: string }> = [
@@ -347,6 +358,86 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     return { duration, speed, obstacles, orbs };
   }
 
+  if (!splitMode && choice.mode === 'wave' && choice.difficulty === 'hard') {
+    const spacing = 360;
+    const width = 64;
+    const centers = [270, 188, 332, 214, 306, 158, 360, 242, 326, 182, 292, 214];
+
+    for (let x = 880; x < levelLength - 860; x += spacing) {
+      const section = Math.floor((x - 880) / spacing);
+      const center =
+        centers[section % centers.length] +
+        Math.sin(section * 0.72) * 18 +
+        Math.sin(x / 560) * 12;
+      const gap = 150 + Math.sin(section * 0.9) * 12;
+      const topHeight = Math.max(54, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 78, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      const spikeHeight = 36;
+      const spikeWidth = 42;
+      const spikeFromTop = section % 3 === 1;
+      for (let index = 0; index < (section % 4 === 0 ? 3 : 2); index += 1) {
+        obstacles.push({
+          kind: 'spike',
+          direction: spikeFromTop ? 'down' : 'up',
+          x: x + 108 + index * (spikeWidth + 7),
+          y: spikeFromTop ? 0 : HEIGHT - 52 - spikeHeight,
+          width: spikeWidth,
+          height: spikeHeight,
+          color: spikeFromTop ? '#2f4f74' : '#8f3d58',
+        });
+      }
+
+      if (section % 2 === 0) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + 210,
+          y: center + (section % 4 === 0 ? -76 : 52),
+          width: 42,
+          height: 42,
+          color: '#d9e2ec',
+        });
+      } else {
+        obstacles.push({
+          x: x + 186,
+          y: center + (section % 4 === 1 ? 48 : -88),
+          width: 54,
+          height: 44,
+          color: '#3d2c8d',
+        });
+      }
+
+      if (section % 3 !== 2) {
+        obstacles.push({
+          kind: 'spikedBlock',
+          x: x + 270,
+          y: center + (section % 2 === 0 ? 18 : -66),
+          width: 46,
+          height: 42,
+          color: '#6842c2',
+        });
+      }
+
+      if (section % 5 === 3) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + 308,
+          y: center + (section % 2 === 0 ? 64 : -96),
+          width: 36,
+          height: 36,
+          color: '#d9e2ec',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
   const isFlipWave = choice.mode === 'flipWave';
   const isLaser = choice.mode === 'laser';
   const isOrbit = choice.mode === 'orbit';
@@ -479,53 +570,147 @@ function clamp(value: number, min: number, max: number) {
 
 function collides(player: Player, obstacle: Obstacle, mode: Mode) {
   const isWaveLike = mode === 'wave' || mode === 'flipWave';
-  const size = isWaveLike ? 16 : mode === 'laser' || mode === 'orbit' ? 18 : 20;
-  const hitboxX = isWaveLike ? player.x + 5 : player.x;
+  if (isWaveLike) {
+    const hitboxes = getWaveHitboxes(player);
+    return (
+      circleCollidesObstacle(hitboxes.nose.x, hitboxes.nose.y, hitboxes.nose.radius, obstacle) ||
+      orientedRectCollidesObstacle(hitboxes.tail, obstacle)
+    );
+  }
 
+  if (mode === 'laser' || mode === 'ship') {
+    return polygonCollidesObstacle(getFlattenedHitbox(player, mode).points, obstacle);
+  }
+
+  const size = getCircularHitboxRadius(mode);
+  return circleCollidesObstacle(player.x, player.y, size, obstacle);
+}
+
+function touchesLevelBounds(player: Player, mode: Mode) {
+  if (mode === 'wave' || mode === 'flipWave') {
+    const hitboxes = getWaveHitboxes(player);
+    return (
+      hitboxes.nose.y - hitboxes.nose.radius <= 0 ||
+      hitboxes.nose.y + hitboxes.nose.radius >= HEIGHT - 52 ||
+      hitboxes.tail.points.some((point) => point.y <= 0 || point.y >= HEIGHT - 52)
+    );
+  }
+
+  if (mode === 'laser' || mode === 'ship') {
+    return getFlattenedHitbox(player, mode).points.some((point) => point.y <= 0 || point.y >= HEIGHT - 52);
+  }
+
+  const size = getCircularHitboxRadius(mode);
+  return player.y - size <= 0 || player.y + size >= HEIGHT - 52;
+}
+
+function getCircularHitboxRadius(mode: Mode) {
+  return mode === 'orbit' ? 18 : 20;
+}
+
+function rotateAroundPlayer(player: Player, x: number, y: number) {
+  const cos = Math.cos(player.angle);
+  const sin = Math.sin(player.angle);
+  return {
+    x: player.x + x * cos - y * sin,
+    y: player.y + x * sin + y * cos,
+  };
+}
+
+function getWaveHitboxes(player: Player) {
+  return {
+    nose: {
+      ...rotateAroundPlayer(player, 11, 0),
+      radius: 10,
+    },
+    tail: {
+      points: [
+        rotateAroundPlayer(player, -16, -5),
+        rotateAroundPlayer(player, 2, -5),
+        rotateAroundPlayer(player, 2, 5),
+        rotateAroundPlayer(player, -16, 5),
+      ],
+    },
+  };
+}
+
+function getFlattenedHitbox(player: Player, mode: Mode) {
+  const radiusX = mode === 'ship' ? 27 : 25;
+  const radiusY = mode === 'ship' ? 12 : 11;
+  const points = Array.from({ length: 16 }, (_, index) => {
+    const angle = (index / 16) * Math.PI * 2;
+    return rotateAroundPlayer(player, Math.cos(angle) * radiusX, Math.sin(angle) * radiusY);
+  });
+  return { radiusX, radiusY, points };
+}
+
+function circleCollidesObstacle(circleX: number, circleY: number, radius: number, obstacle: Obstacle) {
   if (obstacle.kind === 'saw') {
     const sawX = obstacle.x + obstacle.width / 2;
     const sawY = obstacle.y + obstacle.height / 2;
     const sawRadius = obstacle.width / 2 - 4;
-    return Math.hypot(hitboxX - sawX, player.y - sawY) <= size + sawRadius;
+    return Math.hypot(circleX - sawX, circleY - sawY) <= radius + sawRadius;
   }
 
   if (obstacle.kind === 'spike') {
-    const padding = 5;
-    const left = obstacle.x + padding;
-    const right = obstacle.x + obstacle.width - padding;
-    const baseY = obstacle.direction === 'down' ? obstacle.y : obstacle.y + obstacle.height;
-    const tipY = obstacle.direction === 'down' ? obstacle.y + obstacle.height : obstacle.y;
-    const centerX = obstacle.x + obstacle.width / 2;
-    const triangle = [
-      { x: left, y: baseY },
-      { x: right, y: baseY },
-      { x: centerX, y: tipY },
-    ];
-
-    return circleIntersectsTriangle(hitboxX, player.y, size, triangle);
+    return circleIntersectsTriangle(circleX, circleY, radius, spikeTriangle(obstacle));
   }
 
   if (obstacle.kind === 'spikedBlock') {
     const inset = 4;
     return (
-      hitboxX + size > obstacle.x + inset &&
-      hitboxX - size < obstacle.x + obstacle.width - inset &&
-      player.y + size > obstacle.y + inset &&
-      player.y - size < obstacle.y + obstacle.height - inset
+      circleX + radius > obstacle.x + inset &&
+      circleX - radius < obstacle.x + obstacle.width - inset &&
+      circleY + radius > obstacle.y + inset &&
+      circleY - radius < obstacle.y + obstacle.height - inset
     );
   }
 
   return (
-    hitboxX + size > obstacle.x &&
-    hitboxX - size < obstacle.x + obstacle.width &&
-    player.y + size > obstacle.y &&
-    player.y - size < obstacle.y + obstacle.height
+    circleX + radius > obstacle.x &&
+    circleX - radius < obstacle.x + obstacle.width &&
+    circleY + radius > obstacle.y &&
+    circleY - radius < obstacle.y + obstacle.height
   );
 }
 
-function touchesLevelBounds(player: Player, mode: Mode) {
-  const size = mode === 'wave' || mode === 'flipWave' ? 16 : mode === 'laser' || mode === 'orbit' ? 18 : 20;
-  return player.y - size <= 0 || player.y + size >= HEIGHT - 52;
+function orientedRectCollidesObstacle(rect: OrientedRect, obstacle: Obstacle) {
+  return polygonCollidesObstacle(rect.points, obstacle);
+}
+
+function polygonCollidesObstacle(points: Point[], obstacle: Obstacle) {
+  if (obstacle.kind === 'saw') {
+    const sawX = obstacle.x + obstacle.width / 2;
+    const sawY = obstacle.y + obstacle.height / 2;
+    const sawRadius = obstacle.width / 2 - 4;
+    return polygonIntersectsCircle(points, sawX, sawY, sawRadius);
+  }
+
+  if (obstacle.kind === 'spike') {
+    return polygonsIntersect(points, spikeTriangle(obstacle));
+  }
+
+  const inset = obstacle.kind === 'spikedBlock' ? 4 : 0;
+  return polygonIntersectsRect(points, {
+    x: obstacle.x + inset,
+    y: obstacle.y + inset,
+    width: obstacle.width - inset * 2,
+    height: obstacle.height - inset * 2,
+  });
+}
+
+function spikeTriangle(obstacle: Obstacle) {
+  const padding = 5;
+  const left = obstacle.x + padding;
+  const right = obstacle.x + obstacle.width - padding;
+  const baseY = obstacle.direction === 'down' ? obstacle.y : obstacle.y + obstacle.height;
+  const tipY = obstacle.direction === 'down' ? obstacle.y + obstacle.height : obstacle.y;
+  const centerX = obstacle.x + obstacle.width / 2;
+  return [
+    { x: left, y: baseY },
+    { x: right, y: baseY },
+    { x: centerX, y: tipY },
+  ];
 }
 
 function circleIntersectsTriangle(
@@ -540,6 +725,53 @@ function circleIntersectsTriangle(
     const next = triangle[(index + 1) % triangle.length];
     return distanceToSegment(circleX, circleY, point.x, point.y, next.x, next.y) <= radius;
   });
+}
+
+function polygonIntersectsCircle(points: Point[], circleX: number, circleY: number, radius: number) {
+  return (
+    pointInPolygon({ x: circleX, y: circleY }, points) ||
+    points.some((point, index) => {
+      const next = points[(index + 1) % points.length];
+      return distanceToSegment(circleX, circleY, point.x, point.y, next.x, next.y) <= radius;
+    })
+  );
+}
+
+function polygonIntersectsRect(points: Point[], rect: { x: number; y: number; width: number; height: number }) {
+  const rectPoints = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ];
+  return polygonsIntersect(points, rectPoints);
+}
+
+function polygonsIntersect(first: Point[], second: Point[]) {
+  const firstEdges = first.map((point, index) => [point, first[(index + 1) % first.length]] as const);
+  const secondEdges = second.map((point, index) => [point, second[(index + 1) % second.length]] as const);
+
+  return (
+    first.some((point) => pointInPolygon(point, second)) ||
+    second.some((point) => pointInPolygon(point, first)) ||
+    firstEdges.some(([a, b]) => secondEdges.some(([c, d]) => segmentsIntersect(a, b, c, d)))
+  );
+}
+
+function pointInPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const currentPoint = polygon[index];
+    const previousPoint = polygon[previous];
+    const crosses =
+      currentPoint.y > point.y !== previousPoint.y > point.y &&
+      point.x <
+        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+          (previousPoint.y - currentPoint.y) +
+          currentPoint.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
 }
 
 function pointInTriangle(x: number, y: number, triangle: Array<{ x: number; y: number }>) {
@@ -559,6 +791,25 @@ function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: n
   const closestX = ax + t * dx;
   const closestY = ay + t * dy;
   return Math.hypot(px - closestX, py - closestY);
+}
+
+function segmentsIntersect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  c: { x: number; y: number },
+  d: { x: number; y: number },
+) {
+  const direction = (p: { x: number; y: number }, q: { x: number; y: number }, r: { x: number; y: number }) =>
+    (r.x - p.x) * (q.y - p.y) - (q.x - p.x) * (r.y - p.y);
+  const d1 = direction(c, d, a);
+  const d2 = direction(c, d, b);
+  const d3 = direction(a, b, c);
+  const d4 = direction(a, b, d);
+
+  return (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  );
 }
 
 function drawPlayer(
@@ -674,6 +925,56 @@ function drawPlayer(
     ctx.arc(14, -4, 4, 0, Math.PI * 2);
   }
 
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHitbox(ctx: CanvasRenderingContext2D, player: Player, mode: Mode) {
+  ctx.save();
+  ctx.strokeStyle = '#22d3ee';
+  ctx.fillStyle = 'rgba(34, 211, 238, 0.12)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.shadowColor = '#22d3ee';
+  ctx.shadowBlur = 8;
+
+  if (mode === 'wave' || mode === 'flipWave') {
+    const hitboxes = getWaveHitboxes(player);
+    ctx.beginPath();
+    ctx.arc(hitboxes.nose.x, hitboxes.nose.y, hitboxes.nose.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    hitboxes.tail.points.forEach((point, index) => {
+      if (index === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (mode === 'laser' || mode === 'ship') {
+    const hitbox = getFlattenedHitbox(player, mode);
+    ctx.translate(player.x, player.y);
+    ctx.rotate(player.angle);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hitbox.radiusX, hitbox.radiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, getCircularHitboxRadius(mode), 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -918,6 +1219,9 @@ function drawGame(
   }
 
   drawPlayer(ctx, player, choice.mode, inputActive, colors, modifications.upsideDown);
+  if (modifications.showHitboxes) {
+    drawHitbox(ctx, player, choice.mode);
+  }
 
   if (modifications.splitMode && splitPlayer) {
     const splitColors = {
@@ -927,6 +1231,9 @@ function drawGame(
     };
     drawTrail(splitTrail, splitColors.trail);
     drawPlayer(ctx, splitPlayer, choice.mode, inputActive, splitColors, !modifications.upsideDown);
+    if (modifications.showHitboxes) {
+      drawHitbox(ctx, splitPlayer, choice.mode);
+    }
   }
 
   ctx.fillStyle = 'rgba(255,255,255,0.16)';
@@ -1197,6 +1504,14 @@ export default function App() {
     });
   };
 
+  const toggleHitboxes = () => {
+    setModifications((current) => {
+      const next = { ...current, showHitboxes: !current.showHitboxes };
+      saveModifications(next);
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (screen !== 'playing') return;
 
@@ -1382,7 +1697,8 @@ export default function App() {
     if (screen !== 'result') return;
 
     const restartOnEnter = (event: KeyboardEvent) => {
-      if (event.code !== 'Enter') return;
+      if (event.repeat) return;
+      if (event.code !== 'Enter' && event.code !== 'Space') return;
       event.preventDefault();
       startRun();
     };
@@ -1704,6 +2020,14 @@ export default function App() {
             >
               <span>Тень</span>
               <small>{modifications.shadow ? 'Включено' : 'Выключено'}</small>
+            </button>
+            <button
+              className={modifications.showHitboxes ? 'mod-option active' : 'mod-option'}
+              onClick={toggleHitboxes}
+              type="button"
+            >
+              <span>Хитбоксы</span>
+              <small>{modifications.showHitboxes ? 'Включено' : 'Выключено'}</small>
             </button>
           </div>
 
