@@ -45,7 +45,8 @@ button {
   padding: 24px;
 }
 
-.game-shell.playing {
+.game-shell.playing,
+.game-shell.paused {
   grid-template-columns: 1fr;
   padding: 0;
   background: #080b12;
@@ -56,7 +57,8 @@ button {
   justify-content: center;
 }
 
-.game-shell.colors {
+.game-shell.colors,
+.game-shell.mods {
   grid-template-columns: minmax(300px, 560px);
   justify-content: center;
 }
@@ -74,6 +76,7 @@ button {
 }
 
 .game-shell.playing .stage,
+.game-shell.paused .stage,
 .stage:fullscreen {
   width: 100vw;
   height: 100vh;
@@ -92,12 +95,66 @@ canvas {
 }
 
 .game-shell.playing canvas,
+.game-shell.paused canvas,
 .stage:fullscreen canvas {
   width: 100vw;
   height: 100vh;
   aspect-ratio: auto;
   object-fit: contain;
   background: #080b12;
+}
+
+.pause-button {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  z-index: 5;
+  min-width: 104px;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(10, 15, 27, 0.72);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 900;
+  backdrop-filter: blur(12px);
+}
+
+.pause-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  width: min(340px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(10, 15, 27, 0.88);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(14px);
+}
+
+.pause-overlay span {
+  font-size: 36px;
+  font-weight: 900;
+}
+
+.pause-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pause-actions .start-button,
+.pause-actions .menu-button {
+  width: 100%;
 }
 
 .scanline {
@@ -213,6 +270,31 @@ h1 {
   background: rgba(255, 255, 255, 0.045);
 }
 
+.mode-trigger {
+  width: 100%;
+}
+
+.menu-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.menu-action-row .mode-trigger {
+  min-height: 58px;
+  padding: 11px 12px;
+}
+
+.menu-action-row .mode-trigger span {
+  font-size: 16px;
+}
+
+.menu-action-row .mode-trigger small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .option span {
   font-size: 18px;
   font-weight: 800;
@@ -233,6 +315,29 @@ h1 {
 .chip.active {
   border-color: var(--accent);
   background: rgba(57, 208, 255, 0.14);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.mode-modal {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
 }
 
 .difficulty-row {
@@ -306,8 +411,60 @@ h1 {
   gap: 10px;
 }
 
+.secondary-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.secondary-action-row .menu-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  text-align: center;
+}
+
 .colors-panel {
   width: min(560px, calc(100vw - 48px));
+}
+
+.mods-panel {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.mods-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mod-option {
+  min-height: 70px;
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mod-option span {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.mod-option small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.mod-option.active {
+  border-color: var(--accent);
+  background: rgba(57, 208, 255, 0.14);
 }
 
 .color-settings {
@@ -334,14 +491,14 @@ h1 {
 
 .color-swatches {
   display: grid;
-  grid-template-columns: repeat(6, 36px);
+  grid-template-columns: repeat(8, 32px);
   gap: 8px;
   justify-content: end;
 }
 
 .swatch {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 2px solid rgba(255, 255, 255, 0.24);
   border-radius: 50%;
   cursor: pointer;
@@ -411,7 +568,8 @@ h1 {
   padding: 24px;
 }
 
-.game-shell.colors {
+.game-shell.colors,
+.game-shell.mods {
   min-height: 100dvh;
   place-items: center;
   align-content: center;

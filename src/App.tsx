@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-type Mode = 'wave' | 'ship' | 'ufo';
+type Mode = 'wave' | 'flipWave' | 'laser' | 'orbit' | 'ship' | 'ufo';
 type Difficulty = 'easy' | 'medium' | 'hard';
-type Screen = 'menu' | 'playing' | 'result' | 'colors';
+type SpeedMode = 'normal' | 'fast' | 'superfast';
+type Screen = 'menu' | 'playing' | 'paused' | 'result' | 'colors' | 'mods';
 
 type Choice = {
   mode: Mode;
@@ -10,7 +11,7 @@ type Choice = {
 };
 
 type Obstacle = {
-  kind?: 'block' | 'spike';
+  kind?: 'block' | 'spike' | 'saw' | 'spikedBlock';
   direction?: 'up' | 'down';
   x: number;
   y: number;
@@ -45,12 +46,26 @@ type TrailPoint = {
   y: number;
 };
 
+type ShadowSnapshot = Player & {
+  time: number;
+  worldX: number;
+};
+
 type RecordMap = Record<string, number>;
 
 type ColorSettings = Record<Mode | 'trail', string>;
 
+type ModificationSettings = {
+  upsideDown: boolean;
+  splitMode: boolean;
+  shadow: boolean;
+};
+
 const MODES: Array<{ id: Mode; title: string; subtitle: string }> = [
   { id: 'wave', title: 'Волна', subtitle: 'резкие диагонали' },
+  { id: 'flipWave', title: 'Flip Wave', subtitle: 'переключение направления' },
+  { id: 'laser', title: 'Вектор', subtitle: 'скоростной плавный полёт' },
+  { id: 'orbit', title: 'Орбита', subtitle: 'вращение по синусоиде' },
   { id: 'ship', title: 'Корабль', subtitle: 'плавный полёт' },
   { id: 'ufo', title: 'UFO', subtitle: 'прыжки в воздухе' },
 ];
@@ -61,14 +76,39 @@ const DIFFICULTIES: Array<{ id: Difficulty; title: string; multiplier: number }>
   { id: 'hard', title: 'Тяжёлый', multiplier: 1.32 },
 ];
 
+const SPEED_MODES: Array<{ id: SpeedMode; title: string; multiplier: number }> = [
+  { id: 'normal', title: 'Нормальная', multiplier: 1 },
+  { id: 'fast', title: 'Быстрая', multiplier: 1.18 },
+  { id: 'superfast', title: 'Супербыстрая', multiplier: 1.36 },
+];
+
 const DEFAULT_COLORS: ColorSettings = {
   trail: '#2563eb',
   wave: '#2563eb',
+  laser: '#16a34a',
+  flipWave: '#9333ea',
+  orbit: '#f97316',
   ship: '#dc2626',
   ufo: '#facc15',
 };
 
+function getModeColor(colors: ColorSettings, mode: Mode) {
+  return colors[mode] || DEFAULT_COLORS[mode];
+}
+
+function getTrailColor(colors: ColorSettings) {
+  return colors.trail || DEFAULT_COLORS.trail;
+}
+
+const DEFAULT_MODIFICATIONS: ModificationSettings = {
+  upsideDown: false,
+  splitMode: false,
+  shadow: false,
+};
+
 const COLOR_PALETTE: Array<{ title: string; value: string }> = [
+  { title: 'Белый', value: '#ffffff' },
+  { title: 'Чёрный', value: '#050505' },
   { title: 'Жёлтый', value: '#facc15' },
   { title: 'Оранжевый', value: '#f97316' },
   { title: 'Красный', value: '#dc2626' },
@@ -80,6 +120,9 @@ const COLOR_PALETTE: Array<{ title: string; value: string }> = [
 const COLOR_TARGETS: Array<{ id: keyof ColorSettings; title: string }> = [
   { id: 'trail', title: 'След' },
   { id: 'wave', title: 'Волна' },
+  { id: 'flipWave', title: 'Flip Wave' },
+  { id: 'laser', title: 'Вектор' },
+  { id: 'orbit', title: 'Орбита' },
   { id: 'ship', title: 'Корабль' },
   { id: 'ufo', title: 'UFO' },
 ];
@@ -127,9 +170,31 @@ const CONTROL_KEYS = new Set([
 
 const RECORD_KEY = 'dash-practice-records-v1';
 const COLORS_KEY = 'dash-practice-colors-v1';
-const LEVEL_DURATION = 120_000;
+const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
 const WIDTH = 960;
 const HEIGHT = 540;
+const PLAYER_DEFAULT_X = 142;
+const PLAYER_SHADOW_MAX_X = WIDTH - 116;
+const SHADOW_DELAY_MS = 2_000;
+const PLAYER_MIN_Y = 32;
+const PLAYER_MAX_Y = HEIGHT - 82;
+const PLAYER_CENTER_Y = (PLAYER_MIN_Y + PLAYER_MAX_Y) / 2;
+const SPLIT_PLAYER_OFFSET = 62;
+const TRAIL_MAX_POINTS = 360;
+const ORBIT_RADIUS_X = 42;
+const ORBIT_RADIUS_Y = 78;
+const ORBIT_SPEED = 3.35;
+
+function getPlayerStartX(shadowEnabled: boolean, levelSpeed: number) {
+  return shadowEnabled
+    ? Math.min(PLAYER_SHADOW_MAX_X, PLAYER_DEFAULT_X + levelSpeed * (SHADOW_DELAY_MS / 1000))
+    : PLAYER_DEFAULT_X;
+}
+
+function findDelayedShadowSnapshot(history: ShadowSnapshot[], elapsed: number) {
+  const targetTime = elapsed - SHADOW_DELAY_MS;
+  return [...history].reverse().find((point) => point.time <= targetTime) ?? null;
+}
 
 function recordKey(choice: Choice) {
   return `${choice.mode}-${choice.difficulty}`;
@@ -155,7 +220,10 @@ function saveRecord(choice: Choice, progress: number) {
 function loadColors(): ColorSettings {
   try {
     const saved = window.localStorage.getItem(COLORS_KEY);
-    return saved ? { ...DEFAULT_COLORS, ...(JSON.parse(saved) as Partial<ColorSettings>) } : DEFAULT_COLORS;
+    if (!saved) return DEFAULT_COLORS;
+    const merged = { ...DEFAULT_COLORS, ...(JSON.parse(saved) as Partial<ColorSettings>) };
+    saveColors(merged);
+    return merged;
   } catch {
     return DEFAULT_COLORS;
   }
@@ -163,6 +231,21 @@ function loadColors(): ColorSettings {
 
 function saveColors(colors: ColorSettings) {
   window.localStorage.setItem(COLORS_KEY, JSON.stringify(colors));
+}
+
+function loadModifications(): ModificationSettings {
+  try {
+    const saved = window.localStorage.getItem(MODIFICATIONS_KEY);
+    return saved
+      ? { ...DEFAULT_MODIFICATIONS, ...(JSON.parse(saved) as Partial<ModificationSettings>) }
+      : DEFAULT_MODIFICATIONS;
+  } catch {
+    return DEFAULT_MODIFICATIONS;
+  }
+}
+
+function saveModifications(modifications: ModificationSettings) {
+  window.localStorage.setItem(MODIFICATIONS_KEY, JSON.stringify(modifications));
 }
 
 function seededRandom(seed: number) {
@@ -178,20 +261,118 @@ function choiceSeed(choice: Choice) {
   return text.split('').reduce((total, letter) => total + letter.charCodeAt(0), 17);
 }
 
-function buildLevel(choice: Choice): Level {
+function levelDurationByDifficulty(difficulty: Difficulty) {
+  if (difficulty === 'easy') return 60_000;
+  if (difficulty === 'medium') return 90_000;
+  return 120_000;
+}
+
+function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): Level {
   const difficulty = DIFFICULTIES.find((item) => item.id === choice.difficulty) ?? DIFFICULTIES[0];
-  const speed = choice.difficulty === 'hard' ? 255 : choice.difficulty === 'medium' ? 230 : 210;
-  const levelLength = (speed * LEVEL_DURATION) / 1000;
+  const speedSettings = SPEED_MODES.find((item) => item.id === speedMode) ?? SPEED_MODES[0];
+  const baseSpeed = choice.difficulty === 'hard' ? 255 : choice.difficulty === 'medium' ? 230 : 210;
+  const speed = baseSpeed * speedSettings.multiplier;
+  const duration = levelDurationByDifficulty(choice.difficulty);
+  const levelLength = (speed * duration) / 1000;
   const random = seededRandom(choiceSeed(choice));
   const obstacles: Obstacle[] = [];
   const orbs: Orb[] = [];
-  const spacing = choice.mode === 'wave' ? 470 : choice.mode === 'ship' ? 540 : 500;
-  const width = 54 + difficulty.multiplier * 18;
+  if (!splitMode && choice.mode === 'ship' && choice.difficulty === 'medium') {
+    const spacing = 455;
+    const width = 64;
+
+    for (let x = 900; x < levelLength - 850; x += spacing) {
+      const section = Math.floor(x / spacing);
+      const gap = 172 + Math.sin(section * 0.85) * 14;
+      const center =
+        HEIGHT / 2 +
+        Math.sin(x / 1120) * 92 +
+        Math.sin(x / 470) * 24 +
+        (random() - 0.5) * 34;
+      const topHeight = Math.max(58, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      if (section % 3 !== 1) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + spacing * 0.55,
+          y: center - 22 + (section % 2 === 0 ? -54 : 54),
+          width: 38,
+          height: 38,
+          color: '#d9e2ec',
+        });
+      }
+
+      if (section % 3 === 0) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + spacing * 0.82,
+          y: center + (section % 2 === 0 ? 58 : -58),
+          width: 34,
+          height: 34,
+          color: '#d9e2ec',
+        });
+      }
+
+      if (section % 4 === 2 || section % 5 === 1) {
+        obstacles.push({
+          kind: 'spikedBlock',
+          x: x + spacing * (section % 5 === 1 ? 0.68 : 0.34),
+          y: center + (section % 2 === 0 ? -34 : 16),
+          width: 50,
+          height: 46,
+          color: '#6842c2',
+        });
+      }
+
+      if (section % 5 === 0) {
+        const spikeHeight = 34;
+        obstacles.push({
+          kind: 'spike',
+          direction: section % 2 === 0 ? 'up' : 'down',
+          x: x + spacing * 0.22,
+          y: section % 2 === 0 ? HEIGHT - 52 - spikeHeight : 0,
+          width: 42,
+          height: spikeHeight,
+          color: section % 2 === 0 ? '#8f3d58' : '#2f4f74',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
+  const isFlipWave = choice.mode === 'flipWave';
+  const isLaser = choice.mode === 'laser';
+  const isOrbit = choice.mode === 'orbit';
+  const spacing = splitMode ? 560 : isFlipWave ? 520 : isLaser ? 460 : isOrbit ? 500 : choice.mode === 'wave' ? 410 : choice.mode === 'ship' ? 470 : 440;
+  const width = splitMode ? 54 + difficulty.multiplier * 12 : isFlipWave || isOrbit ? 54 + difficulty.multiplier * 12 : 62 + difficulty.multiplier * 20;
 
   for (let x = 920; x < levelLength - 900; x += spacing) {
-    const gap = Math.max(112, 220 - difficulty.multiplier * 42 - random() * 24);
-    const centerWave = choice.mode === 'wave' ? Math.sin(x / 760) * 118 : Math.sin(x / 940) * 86;
-    const center = HEIGHT / 2 + centerWave + (random() - 0.5) * 110;
+    const splitGap = choice.difficulty === 'hard' ? 248 : choice.difficulty === 'medium' ? 270 : 296;
+    const flipGap = choice.difficulty === 'hard' ? 176 : choice.difficulty === 'medium' ? 202 : 230;
+    const orbitGap = choice.difficulty === 'hard' ? 182 : choice.difficulty === 'medium' ? 210 : 238;
+    const normalGap = Math.max(96, 198 - difficulty.multiplier * 44 - random() * 26);
+    const gap = splitMode ? splitGap : isFlipWave ? flipGap : isOrbit ? orbitGap : normalGap;
+    const splitWave = Math.sin(x / 980) * (choice.difficulty === 'hard' ? 40 : 30);
+    const centerWave = splitMode
+      ? splitWave
+      : choice.mode === 'wave'
+        ? Math.sin(x / 760) * 118
+        : isLaser
+          ? Math.sin(x / 880) * 86
+        : isOrbit
+          ? Math.sin(x / 700) * 96 + Math.sin(x / 340) * 28
+        : isFlipWave
+          ? Math.sin(x / 980) * 62
+        : Math.sin(x / 940) * 86;
+    const centerNoise = splitMode ? (random() - 0.5) * 34 : isFlipWave || isOrbit ? (random() - 0.5) * 42 : (random() - 0.5) * 110;
+    const center = (splitMode ? PLAYER_CENTER_Y : HEIGHT / 2) + centerWave + centerNoise;
     const topHeight = Math.max(60, center - gap / 2);
     const bottomY = Math.min(HEIGHT - 74, center + gap / 2);
     const bottomHeight = HEIGHT - bottomY - 52;
@@ -211,13 +392,13 @@ function buildLevel(choice: Choice): Level {
       color: x % (spacing * 2) < spacing ? '#243b53' : '#7c314f',
     });
 
-    if (choice.mode === 'ufo' && random() > 0.45) {
+    if (choice.mode === 'ufo' && random() > 0.38) {
       orbs.push({ x: x + spacing * 0.45, y: 150 + random() * 240, radius: 14 });
     }
 
-    if (random() > (choice.difficulty === 'easy' ? 0.62 : 0.42)) {
-      const spikeCount = choice.difficulty === 'hard' ? 3 : choice.difficulty === 'medium' ? 2 : 1;
-      const spikeHeight = 32 + difficulty.multiplier * 10;
+    if (random() > (splitMode ? 0.66 : isFlipWave || isOrbit ? 0.68 : choice.difficulty === 'easy' ? 0.48 : 0.26)) {
+      const spikeCount = choice.difficulty === 'hard' ? 4 : choice.difficulty === 'medium' ? 3 : 2;
+      const spikeHeight = splitMode ? 26 + difficulty.multiplier * 6 : 32 + difficulty.multiplier * 10;
       const spikeWidth = 38 + difficulty.multiplier * 8;
       const startX = x + spacing * (0.22 + random() * 0.18);
       const fromTop = random() > 0.56;
@@ -235,7 +416,7 @@ function buildLevel(choice: Choice): Level {
       }
     }
 
-    if (choice.difficulty !== 'easy' && random() > 0.58) {
+    if (!splitMode && !isFlipWave && !isOrbit && choice.difficulty !== 'easy' && random() > 0.42) {
       obstacles.push({
         x: x + spacing * 0.52,
         y: 170 + random() * 190,
@@ -244,9 +425,52 @@ function buildLevel(choice: Choice): Level {
         color: '#3d2c8d',
       });
     }
+
+    if (!splitMode && isFlipWave && choice.difficulty !== 'easy' && random() > 0.64) {
+      obstacles.push({
+        x: x + spacing * (0.45 + random() * 0.2),
+        y: 178 + random() * 170,
+        width: width * 0.72,
+        height: 38 + random() * 36,
+        color: '#3d2c8d',
+      });
+    }
+
+    if (!splitMode && isOrbit && choice.difficulty !== 'easy' && random() > 0.58) {
+      obstacles.push({
+        x: x + spacing * (0.44 + random() * 0.18),
+        y: 156 + random() * 210,
+        width: width * 0.72,
+        height: 36 + random() * 34,
+        color: '#3d2c8d',
+      });
+    }
+
+    if (random() > (splitMode ? 0.62 : isFlipWave || isOrbit ? 0.72 : 0.38)) {
+      const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
+      obstacles.push({
+        kind: 'saw',
+        x: x + spacing * (0.46 + random() * 0.22),
+        y: splitMode ? 190 + random() * 130 : isFlipWave || isOrbit ? 158 + random() * 210 : 128 + random() * 260,
+        width: sawSize,
+        height: sawSize,
+        color: '#d9e2ec',
+      });
+    }
+
+    if (random() > (splitMode ? 0.78 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48)) {
+      obstacles.push({
+        kind: 'spikedBlock',
+        x: x + spacing * (0.3 + random() * 0.35),
+        y: splitMode ? 218 + random() * 80 : isFlipWave || isOrbit ? 164 + random() * 190 : 132 + random() * 230,
+        width: splitMode ? 42 : isFlipWave || isOrbit ? 42 + difficulty.multiplier * 6 : 52 + difficulty.multiplier * 8,
+        height: splitMode ? 42 : isFlipWave || isOrbit ? 40 + difficulty.multiplier * 6 : 46 + difficulty.multiplier * 8,
+        color: '#6842c2',
+      });
+    }
   }
 
-  return { duration: LEVEL_DURATION, speed, obstacles, orbs };
+  return { duration, speed, obstacles, orbs };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -254,8 +478,16 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function collides(player: Player, obstacle: Obstacle, mode: Mode) {
-  const size = mode === 'wave' ? 18 : 20;
-  const hitboxX = mode === 'wave' ? player.x + 5 : player.x;
+  const isWaveLike = mode === 'wave' || mode === 'flipWave';
+  const size = isWaveLike ? 16 : mode === 'laser' || mode === 'orbit' ? 18 : 20;
+  const hitboxX = isWaveLike ? player.x + 5 : player.x;
+
+  if (obstacle.kind === 'saw') {
+    const sawX = obstacle.x + obstacle.width / 2;
+    const sawY = obstacle.y + obstacle.height / 2;
+    const sawRadius = obstacle.width / 2 - 4;
+    return Math.hypot(hitboxX - sawX, player.y - sawY) <= size + sawRadius;
+  }
 
   if (obstacle.kind === 'spike') {
     const padding = 5;
@@ -273,6 +505,16 @@ function collides(player: Player, obstacle: Obstacle, mode: Mode) {
     return circleIntersectsTriangle(hitboxX, player.y, size, triangle);
   }
 
+  if (obstacle.kind === 'spikedBlock') {
+    const inset = 4;
+    return (
+      hitboxX + size > obstacle.x + inset &&
+      hitboxX - size < obstacle.x + obstacle.width - inset &&
+      player.y + size > obstacle.y + inset &&
+      player.y - size < obstacle.y + obstacle.height - inset
+    );
+  }
+
   return (
     hitboxX + size > obstacle.x &&
     hitboxX - size < obstacle.x + obstacle.width &&
@@ -282,7 +524,7 @@ function collides(player: Player, obstacle: Obstacle, mode: Mode) {
 }
 
 function touchesLevelBounds(player: Player, mode: Mode) {
-  const size = mode === 'wave' ? 18 : 20;
+  const size = mode === 'wave' || mode === 'flipWave' ? 16 : mode === 'laser' || mode === 'orbit' ? 18 : 20;
   return player.y - size <= 0 || player.y + size >= HEIGHT - 52;
 }
 
@@ -319,19 +561,76 @@ function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: n
   return Math.hypot(px - closestX, py - closestY);
 }
 
-function drawPlayer(ctx: CanvasRenderingContext2D, player: Player, mode: Mode, active: boolean, colors: ColorSettings) {
-  const color = colors[mode];
+function drawPlayer(
+  ctx: CanvasRenderingContext2D,
+  player: Player,
+  mode: Mode,
+  active: boolean,
+  colors: ColorSettings,
+  upsideDown: boolean,
+) {
+  const color = getModeColor(colors, mode);
   ctx.save();
   ctx.translate(player.x, player.y);
   ctx.rotate(player.angle);
-  ctx.scale(0.82, 0.82);
+  const scale = mode === 'wave' || mode === 'flipWave' ? 0.74 : mode === 'orbit' ? 0.78 : 0.82;
+  ctx.scale(scale, upsideDown ? -scale : scale);
   ctx.fillStyle = color;
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 4;
   ctx.shadowColor = color;
   ctx.shadowBlur = active ? 18 : 8;
 
-  if (mode === 'wave') {
+  if (mode === 'laser') {
+    ctx.beginPath();
+    ctx.moveTo(38, 0);
+    ctx.lineTo(10, -12);
+    ctx.lineTo(-18, -10);
+    ctx.lineTo(-30, -4);
+    ctx.lineTo(-14, 0);
+    ctx.lineTo(-30, 4);
+    ctx.lineTo(-18, 10);
+    ctx.lineTo(10, 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.ellipse(9, -2, 7, 4, -0.18, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.fillStyle = active ? getTrailColor(colors) : 'rgba(255,255,255,0.72)';
+    ctx.moveTo(-28, -4);
+    ctx.lineTo(-52, 0);
+    ctx.lineTo(-28, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    return;
+  } else if (mode === 'orbit') {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 30, 14, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.82)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(10, 0, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.fillStyle = active ? getTrailColor(colors) : 'rgba(255,255,255,0.82)';
+    ctx.arc(-18, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  } else if (mode === 'wave' || mode === 'flipWave') {
     ctx.beginPath();
     ctx.moveTo(27, 0);
     ctx.lineTo(-20, -18);
@@ -385,8 +684,15 @@ function drawGame(
   level: Level,
   choice: Choice,
   colors: ColorSettings,
+  modifications: ModificationSettings,
   player: Player,
   trail: TrailPoint[],
+  splitPlayer: Player | null,
+  splitTrail: TrailPoint[],
+  shadowSnapshot: ShadowSnapshot | null,
+  splitShadowSnapshot: ShadowSnapshot | null,
+  shadowTeleportsLeft: number,
+  shadowCooldownUntil: number,
   attempt: number,
   elapsed: number,
   inputActive: boolean,
@@ -397,7 +703,7 @@ function drawGame(
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   const progress = clamp(elapsed / level.duration, 0, 1);
   const cameraX = progress * level.speed * (level.duration / 1000);
-  const accent = colors[choice.mode];
+  const accent = getModeColor(colors, choice.mode);
 
   const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
   sky.addColorStop(0, '#111827');
@@ -453,6 +759,73 @@ function drawGame(
       return;
     }
 
+    if (obstacle.kind === 'saw') {
+      const centerX = screenX + obstacle.width / 2;
+      const centerY = obstacle.y + obstacle.height / 2;
+      const radius = obstacle.width / 2;
+      const teeth = 14;
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(cameraX / 34);
+      ctx.beginPath();
+      for (let index = 0; index < teeth * 2; index += 1) {
+        const angle = (index / (teeth * 2)) * Math.PI * 2;
+        const pointRadius = index % 2 === 0 ? radius : radius * 0.68;
+        const px = Math.cos(angle) * pointRadius;
+        const py = Math.sin(angle) * pointRadius;
+        if (index === 0) {
+          ctx.moveTo(px, py);
+        } else {
+          ctx.lineTo(px, py);
+        }
+      }
+      ctx.closePath();
+      ctx.fillStyle = obstacle.color;
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 8;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.fillStyle = '#111827';
+      ctx.arc(0, 0, radius * 0.26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    if (obstacle.kind === 'spikedBlock') {
+      const tooth = 9;
+      ctx.save();
+      ctx.fillStyle = obstacle.color;
+      ctx.shadowColor = obstacle.color;
+      ctx.shadowBlur = 10;
+      ctx.fillRect(screenX, obstacle.y, obstacle.width, obstacle.height);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.44)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(screenX + 1, obstacle.y + 1, obstacle.width - 2, obstacle.height - 2);
+      ctx.fillStyle = '#d9e2ec';
+      for (let px = screenX + 4; px < screenX + obstacle.width - 4; px += tooth) {
+        ctx.beginPath();
+        ctx.moveTo(px, obstacle.y);
+        ctx.lineTo(px + tooth / 2, obstacle.y - tooth);
+        ctx.lineTo(px + tooth, obstacle.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(px, obstacle.y + obstacle.height);
+        ctx.lineTo(px + tooth / 2, obstacle.y + obstacle.height + tooth);
+        ctx.lineTo(px + tooth, obstacle.y + obstacle.height);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+      return;
+    }
+
     ctx.fillStyle = obstacle.color;
     ctx.fillRect(screenX, obstacle.y, obstacle.width, obstacle.height);
     ctx.strokeStyle = 'rgba(255,255,255,0.38)';
@@ -472,16 +845,17 @@ function drawGame(
     ctx.shadowBlur = 0;
   });
 
-  if (trail.length > 1) {
+  const drawTrail = (points: TrailPoint[], color: string) => {
+    if (points.length <= 1) return;
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = colors.trail;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 4;
-    ctx.shadowColor = colors.trail;
+    ctx.shadowColor = color;
     ctx.shadowBlur = 10;
     ctx.beginPath();
-    trail.forEach((point, index) => {
+    points.forEach((point, index) => {
       const screenX = point.x - cameraX + 140;
       if (index === 0) {
         ctx.moveTo(screenX, point.y);
@@ -491,9 +865,69 @@ function drawGame(
     });
     ctx.stroke();
     ctx.restore();
+  };
+
+  drawTrail(trail, getTrailColor(colors));
+
+  const drawOrbitGuide = (orbitPlayer: Player | null, splitDirection: 1 | -1) => {
+    if (choice.mode !== 'orbit' || !orbitPlayer) return;
+    const gravityDirection = (modifications.upsideDown ? -1 : 1) * splitDirection;
+    const centerX = orbitPlayer.x - Math.cos(orbitPlayer.cooldown) * ORBIT_RADIUS_X;
+    const centerY = orbitPlayer.y - Math.sin(orbitPlayer.cooldown) * ORBIT_RADIUS_Y * gravityDirection;
+    ctx.save();
+    ctx.setLineDash([8, 8]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.ellipse(centerX, centerY, ORBIT_RADIUS_X, ORBIT_RADIUS_Y, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  drawOrbitGuide(player, 1);
+
+  if (modifications.splitMode) {
+    drawOrbitGuide(splitPlayer, -1);
   }
 
-  drawPlayer(ctx, player, choice.mode, inputActive, colors);
+  const drawShadow = (snapshot: ShadowSnapshot | null, upsideDown: boolean) => {
+    if (!modifications.shadow || !snapshot) return;
+    const shadowX = snapshot.worldX - cameraX + 140;
+    if (shadowX <= -80 || shadowX >= WIDTH + 80) return;
+    const shadowColors: ColorSettings = {
+      trail: 'rgba(156, 163, 175, 0.58)',
+      wave: 'rgba(156, 163, 175, 0.58)',
+      flipWave: 'rgba(156, 163, 175, 0.58)',
+      laser: 'rgba(156, 163, 175, 0.58)',
+      orbit: 'rgba(156, 163, 175, 0.58)',
+      ship: 'rgba(156, 163, 175, 0.58)',
+      ufo: 'rgba(156, 163, 175, 0.58)',
+    };
+    ctx.save();
+    ctx.globalAlpha = 0.58;
+    drawPlayer(ctx, { ...snapshot, x: shadowX }, choice.mode, false, shadowColors, upsideDown);
+    ctx.restore();
+  };
+
+  drawShadow(shadowSnapshot, modifications.upsideDown);
+
+  if (modifications.splitMode) {
+    drawShadow(splitShadowSnapshot, !modifications.upsideDown);
+  }
+
+  drawPlayer(ctx, player, choice.mode, inputActive, colors, modifications.upsideDown);
+
+  if (modifications.splitMode && splitPlayer) {
+    const splitColors = {
+      ...colors,
+      trail: getModeColor(colors, choice.mode),
+      [choice.mode]: getTrailColor(colors),
+    };
+    drawTrail(splitTrail, splitColors.trail);
+    drawPlayer(ctx, splitPlayer, choice.mode, inputActive, splitColors, !modifications.upsideDown);
+  }
 
   ctx.fillStyle = 'rgba(255,255,255,0.16)';
   ctx.fillRect(24, 22, WIDTH - 48, 10);
@@ -503,6 +937,27 @@ function drawGame(
   ctx.fillStyle = '#ffffff';
   ctx.font = '700 24px Inter, system-ui, sans-serif';
   ctx.fillText(`${Math.round(progress * 100)}%`, 24, 66);
+
+  if (modifications.shadow) {
+    const cooldownLeft = Math.max(0, Math.ceil(shadowCooldownUntil - elapsed));
+    ctx.fillStyle = 'rgba(10,15,27,0.68)';
+    ctx.fillRect(WIDTH - 190, 22, 166, 64);
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(WIDTH - 190, 22, 166, 64);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 16px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Тень: ${shadowTeleportsLeft}`, WIDTH - 107, 48);
+    ctx.font = '700 13px Inter, system-ui, sans-serif';
+    ctx.fillStyle = cooldownLeft > 0 ? '#facc15' : '#7df9c2';
+    ctx.fillText(
+      cooldownLeft > 0 ? `КД: ${(cooldownLeft / 1000).toFixed(1).replace('.', ',')} с` : 'КД: готово',
+      WIDTH - 107,
+      70,
+    );
+    ctx.textAlign = 'start';
+  }
 
   if (progress < 0.045 && attempt > 0) {
     const fade = clamp((0.045 - progress) / 0.02, 0, 1);
@@ -518,34 +973,83 @@ function drawGame(
   }
 }
 
-function updatePlayer(player: Player, mode: Mode, inputActive: boolean, dt: number) {
-  const next = { ...player, cooldown: Math.max(0, player.cooldown - dt) };
+function updatePlayer(
+  player: Player,
+  mode: Mode,
+  inputActive: boolean,
+  ufoJumpQueued: boolean,
+  upsideDown: boolean,
+  splitDirection: 1 | -1,
+  dt: number,
+) {
+  const next = mode === 'orbit' ? { ...player } : { ...player, cooldown: Math.max(0, player.cooldown - dt) };
+  const gravityDirection = (upsideDown ? -1 : 1) * splitDirection;
 
   if (mode === 'wave') {
-    next.vy = inputActive ? -330 : 330;
+    next.vy = (inputActive ? -330 : 330) * gravityDirection;
     next.y += next.vy * dt;
-    next.angle = inputActive ? -0.68 : 0.68;
+    next.angle = (inputActive ? -0.68 : 0.68) * gravityDirection;
+  }
+
+  if (mode === 'flipWave') {
+    if (Math.abs(next.vy) < 1) {
+      next.vy = 330 * gravityDirection;
+    }
+    if (ufoJumpQueued) {
+      next.vy = -next.vy;
+    }
+    next.y += next.vy * dt;
+    next.angle = next.vy < 0 ? -0.68 : 0.68;
+  }
+
+  if (mode === 'laser') {
+    const targetVy = (inputActive ? -330 : 330) * gravityDirection;
+    const response = 12;
+    next.vy += (targetVy - next.vy) * Math.min(1, response * dt);
+    next.y += next.vy * dt;
+    next.angle = clamp(next.vy / 500, -0.62, 0.62);
+  }
+
+  if (mode === 'orbit') {
+    const direction = Math.abs(next.vy) < 0.01 ? 1 : Math.sign(next.vy);
+    const nextDirection = ufoJumpQueued ? -direction : direction;
+    const previousPhase = next.cooldown;
+    const nextPhase = previousPhase + nextDirection * ORBIT_SPEED * dt;
+    next.x += (Math.cos(nextPhase) - Math.cos(previousPhase)) * ORBIT_RADIUS_X;
+    next.y += (Math.sin(nextPhase) - Math.sin(previousPhase)) * ORBIT_RADIUS_Y * gravityDirection;
+    next.vy = nextDirection;
+    next.cooldown = nextPhase;
+    next.angle = nextPhase * 0.9 * gravityDirection;
   }
 
   if (mode === 'ship') {
-    next.vy += (inputActive ? -900 : 710) * dt;
+    next.vy += (inputActive ? -900 : 710) * gravityDirection * dt;
     next.vy = clamp(next.vy, -470, 500);
     next.y += next.vy * dt;
     next.angle = clamp(next.vy / 560, -0.72, 0.72);
   }
 
   if (mode === 'ufo') {
-    if (inputActive && next.cooldown <= 0) {
-      next.vy = -360;
+    if (ufoJumpQueued && next.cooldown <= 0) {
+      next.vy = -360 * gravityDirection;
       next.cooldown = 0.2;
     }
-    next.vy += 760 * dt;
+    next.vy += 760 * gravityDirection * dt;
     next.vy = clamp(next.vy, -430, 500);
     next.y += next.vy * dt;
     next.angle += 2.8 * dt;
   }
 
-  next.y = clamp(next.y, 32, HEIGHT - 82);
+  const minY = PLAYER_MIN_Y;
+  const maxY = PLAYER_MAX_Y;
+  const slidesOnBounds = mode === 'wave' || mode === 'flipWave' || mode === 'laser' || mode === 'orbit';
+  if (!slidesOnBounds && next.y <= minY && next.vy < 0) {
+    next.vy = 0;
+  }
+  if (!slidesOnBounds && next.y >= maxY && next.vy > 0) {
+    next.vy = 0;
+  }
+  next.y = clamp(next.y, minY, maxY);
   return next;
 }
 
@@ -555,18 +1059,39 @@ export default function App() {
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
   const inputRef = useRef(false);
+  const ufoJumpQueuedRef = useRef(false);
   const elapsedRef = useRef(0);
   const attemptRef = useRef(0);
-  const playerRef = useRef<Player>({ x: 142, y: HEIGHT / 2, vy: 0, angle: 0, cooldown: 0 });
+  const playerRef = useRef<Player>({ x: PLAYER_DEFAULT_X, y: PLAYER_CENTER_Y, vy: 0, angle: 0, cooldown: 0 });
+  const splitPlayerRef = useRef<Player>({
+    x: PLAYER_DEFAULT_X,
+    y: PLAYER_CENTER_Y + SPLIT_PLAYER_OFFSET,
+    vy: 0,
+    angle: 0,
+    cooldown: 0,
+  });
   const trailRef = useRef<TrailPoint[]>([]);
+  const splitTrailRef = useRef<TrailPoint[]>([]);
+  const shadowHistoryRef = useRef<ShadowSnapshot[]>([]);
+  const splitShadowHistoryRef = useRef<ShadowSnapshot[]>([]);
+  const shadowSnapshotRef = useRef<ShadowSnapshot | null>(null);
+  const splitShadowSnapshotRef = useRef<ShadowSnapshot | null>(null);
+  const shadowTeleportsLeftRef = useRef(5);
+  const shadowCooldownUntilRef = useRef(0);
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
+  const [speedMode, setSpeedMode] = useState<SpeedMode>('normal');
   const [screen, setScreen] = useState<Screen>('menu');
   const [records, setRecords] = useState<RecordMap>(() => loadRecords());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
+  const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
   const [lastResult, setLastResult] = useState<{ progress: number; completed: boolean } | null>(null);
+  const [modePickerOpen, setModePickerOpen] = useState(false);
+  const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
 
-  const level = useMemo(() => buildLevel(choice), [choice]);
+  const level = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
   const best = records[recordKey(choice)] ?? 0;
+  const selectedMode = MODES.find((mode) => mode.id === choice.mode) ?? MODES[0];
+  const selectedSpeed = SPEED_MODES.find((speed) => speed.id === speedMode) ?? SPEED_MODES[0];
 
   const finishRun = useCallback(
     (progress: number, completed: boolean) => {
@@ -582,18 +1107,61 @@ export default function App() {
   );
 
   const startRun = () => {
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
     attemptRef.current += 1;
     elapsedRef.current = 0;
     lastTimeRef.current = 0;
     inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
     trailRef.current = [];
-    playerRef.current = { x: 142, y: HEIGHT / 2, vy: 0, angle: 0, cooldown: 0 };
+    splitTrailRef.current = [];
+    shadowHistoryRef.current = [];
+    splitShadowHistoryRef.current = [];
+    shadowSnapshotRef.current = null;
+    splitShadowSnapshotRef.current = null;
+    shadowTeleportsLeftRef.current = 5;
+    shadowCooldownUntilRef.current = 0;
+    const playerStartX = getPlayerStartX(modifications.shadow, level.speed);
+    playerRef.current = {
+      x: playerStartX,
+      y: modifications.splitMode ? PLAYER_CENTER_Y - SPLIT_PLAYER_OFFSET : PLAYER_CENTER_Y,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
+    splitPlayerRef.current = {
+      x: playerStartX,
+      y: PLAYER_CENTER_Y + SPLIT_PLAYER_OFFSET,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
     setLastResult(null);
     setScreen('playing');
   };
 
-  const returnToMenu = () => {
+  const pauseRun = () => {
     inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    setScreen('paused');
+  };
+
+  const resumeRun = () => {
+    lastTimeRef.current = 0;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    setScreen('playing');
+  };
+
+  const returnToMenu = () => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
     setScreen('menu');
   };
 
@@ -601,6 +1169,30 @@ export default function App() {
     setColors((current) => {
       const next = { ...current, [target]: value };
       saveColors(next);
+      return next;
+    });
+  };
+
+  const toggleUpsideDown = () => {
+    setModifications((current) => {
+      const next = { ...current, upsideDown: !current.upsideDown };
+      saveModifications(next);
+      return next;
+    });
+  };
+
+  const toggleSplitMode = () => {
+    setModifications((current) => {
+      const next = { ...current, splitMode: !current.splitMode };
+      saveModifications(next);
+      return next;
+    });
+  };
+
+  const toggleShadow = () => {
+    setModifications((current) => {
+      const next = { ...current, shadow: !current.shadow };
+      saveModifications(next);
       return next;
     });
   };
@@ -615,21 +1207,84 @@ export default function App() {
       elapsedRef.current += dt * 1000;
 
       const cameraX = (elapsedRef.current / 1000) * level.speed;
-      const player = updatePlayer(playerRef.current, choice.mode, inputRef.current, dt);
+      const player = updatePlayer(
+        playerRef.current,
+        choice.mode,
+        inputRef.current,
+        ufoJumpQueuedRef.current,
+        modifications.upsideDown,
+        1,
+        dt,
+      );
+      const splitPlayer = modifications.splitMode
+        ? updatePlayer(
+            splitPlayerRef.current,
+            choice.mode,
+            inputRef.current,
+            ufoJumpQueuedRef.current,
+            modifications.upsideDown,
+            -1,
+            dt,
+          )
+        : null;
+      ufoJumpQueuedRef.current = false;
       const worldPlayer = { ...player, x: cameraX + player.x - 140 };
-      trailRef.current = [...trailRef.current, { x: worldPlayer.x, y: player.y }].slice(-140);
+      const worldSplitPlayer = splitPlayer ? { ...splitPlayer, x: cameraX + splitPlayer.x - 140 } : null;
+      trailRef.current = [...trailRef.current, { x: worldPlayer.x, y: player.y }].slice(-TRAIL_MAX_POINTS);
+      if (modifications.shadow) {
+        shadowHistoryRef.current = [
+          ...shadowHistoryRef.current,
+          { ...player, time: elapsedRef.current, worldX: worldPlayer.x },
+        ].filter((point) => elapsedRef.current - point.time <= 14_000);
+        splitShadowHistoryRef.current =
+          splitPlayer && worldSplitPlayer
+            ? [
+                ...splitShadowHistoryRef.current,
+                { ...splitPlayer, time: elapsedRef.current, worldX: worldSplitPlayer.x },
+              ].filter((point) => elapsedRef.current - point.time <= 14_000)
+            : [];
+        const visibleShadow =
+          shadowTeleportsLeftRef.current > 0 && elapsedRef.current >= shadowCooldownUntilRef.current;
+        shadowSnapshotRef.current = visibleShadow
+          ? findDelayedShadowSnapshot(shadowHistoryRef.current, elapsedRef.current)
+          : null;
+        splitShadowSnapshotRef.current =
+          visibleShadow && splitPlayer
+            ? findDelayedShadowSnapshot(splitShadowHistoryRef.current, elapsedRef.current)
+            : null;
+      } else {
+        shadowSnapshotRef.current = null;
+        splitShadowSnapshotRef.current = null;
+      }
+      if (splitPlayer && worldSplitPlayer) {
+        splitTrailRef.current = [...splitTrailRef.current, { x: worldSplitPlayer.x, y: splitPlayer.y }].slice(-TRAIL_MAX_POINTS);
+      }
       const hit =
         touchesLevelBounds(player, choice.mode) ||
-        level.obstacles.some((obstacle) => collides(worldPlayer, obstacle, choice.mode));
+        level.obstacles.some((obstacle) => collides(worldPlayer, obstacle, choice.mode)) ||
+        (splitPlayer !== null &&
+          worldSplitPlayer !== null &&
+          (touchesLevelBounds(splitPlayer, choice.mode) ||
+            level.obstacles.some((obstacle) => collides(worldSplitPlayer, obstacle, choice.mode))));
 
       playerRef.current = player;
+      if (splitPlayer) {
+        splitPlayerRef.current = splitPlayer;
+      }
       drawGame(
         canvasRef.current!,
         level,
         choice,
         colors,
+        modifications,
         player,
         trailRef.current,
+        splitPlayer,
+        splitTrailRef.current,
+        shadowSnapshotRef.current,
+        splitShadowSnapshotRef.current,
+        shadowTeleportsLeftRef.current,
+        shadowCooldownUntilRef.current,
         attemptRef.current,
         elapsedRef.current,
         inputRef.current,
@@ -652,13 +1307,16 @@ export default function App() {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [choice, colors, finishRun, level, screen]);
+  }, [choice, colors, finishRun, level, modifications, screen]);
 
   useEffect(() => {
     const isControlKey = (event: KeyboardEvent) => CONTROL_KEYS.has(event.code);
     const activate = (event: KeyboardEvent) => {
       if (!isControlKey(event)) return;
       event.preventDefault();
+      if (!inputRef.current) {
+        ufoJumpQueuedRef.current = true;
+      }
       inputRef.current = true;
     };
     const release = (event: KeyboardEvent) => {
@@ -668,6 +1326,9 @@ export default function App() {
     };
     const activatePointer = (event: PointerEvent | TouchEvent) => {
       event.preventDefault();
+      if (!inputRef.current) {
+        ufoJumpQueuedRef.current = true;
+      }
       inputRef.current = true;
     };
     const releasePointer = (event: PointerEvent | TouchEvent) => {
@@ -692,13 +1353,30 @@ export default function App() {
 
   useEffect(() => {
     if (screen === 'menu' && canvasRef.current) {
-      drawGame(canvasRef.current, level, choice, colors, playerRef.current, [], attemptRef.current, 0, false);
+      drawGame(
+        canvasRef.current,
+        level,
+        choice,
+        colors,
+        modifications,
+        playerRef.current,
+        [],
+        null,
+        [],
+        null,
+        null,
+        shadowTeleportsLeftRef.current,
+        0,
+        attemptRef.current,
+        0,
+        false,
+      );
     }
-  }, [choice, colors, level, screen]);
+  }, [choice, colors, level, modifications, screen]);
 
   useEffect(() => {
     attemptRef.current = 0;
-  }, [choice]);
+  }, [choice, speedMode, modifications.splitMode]);
 
   useEffect(() => {
     if (screen !== 'result') return;
@@ -713,12 +1391,105 @@ export default function App() {
     return () => window.removeEventListener('keydown', restartOnEnter);
   }, [screen]);
 
+  useEffect(() => {
+    if (screen !== 'paused') return;
+
+    const resumeOnEnter = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (event.code !== 'Backspace') return;
+      event.preventDefault();
+      resumeRun();
+    };
+
+    window.addEventListener('keydown', resumeOnEnter);
+    return () => window.removeEventListener('keydown', resumeOnEnter);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== 'playing') return;
+
+    const pauseOnBackspace = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (event.code !== 'Backspace') return;
+      event.preventDefault();
+      pauseRun();
+    };
+
+    window.addEventListener('keydown', pauseOnBackspace);
+    return () => window.removeEventListener('keydown', pauseOnBackspace);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== 'playing' || !modifications.shadow) return;
+
+    const teleportToShadow = (event: KeyboardEvent) => {
+      if (event.repeat || (event.code !== 'AltLeft' && event.code !== 'AltRight')) return;
+      event.preventDefault();
+      const shadow = findDelayedShadowSnapshot(shadowHistoryRef.current, elapsedRef.current);
+      if (!shadow || shadowTeleportsLeftRef.current <= 0 || elapsedRef.current < shadowCooldownUntilRef.current) return;
+      const splitShadow = modifications.splitMode
+        ? findDelayedShadowSnapshot(splitShadowHistoryRef.current, elapsedRef.current)
+        : null;
+      elapsedRef.current = shadow.time;
+      lastTimeRef.current = 0;
+      playerRef.current = {
+        ...playerRef.current,
+        x: shadow.x,
+        y: shadow.y,
+        vy: shadow.vy,
+        angle: shadow.angle,
+        cooldown: shadow.cooldown,
+      };
+      if (splitShadow) {
+        splitPlayerRef.current = {
+          ...splitPlayerRef.current,
+          x: splitShadow.x,
+          y: splitShadow.y,
+          vy: splitShadow.vy,
+          angle: splitShadow.angle,
+          cooldown: splitShadow.cooldown,
+        };
+      }
+      shadowHistoryRef.current = shadowHistoryRef.current.filter((point) => point.time <= shadow.time);
+      splitShadowHistoryRef.current = splitShadowHistoryRef.current.filter((point) => point.time <= shadow.time);
+      trailRef.current = shadowHistoryRef.current.map((point) => ({ x: point.worldX, y: point.y })).slice(-TRAIL_MAX_POINTS);
+      splitTrailRef.current = splitShadowHistoryRef.current
+        .map((point) => ({ x: point.worldX, y: point.y }))
+        .slice(-TRAIL_MAX_POINTS);
+      shadowTeleportsLeftRef.current -= 1;
+      shadowCooldownUntilRef.current = elapsedRef.current + 10_000;
+      shadowSnapshotRef.current = null;
+      splitShadowSnapshotRef.current = null;
+    };
+
+    window.addEventListener('keydown', teleportToShadow);
+    return () => window.removeEventListener('keydown', teleportToShadow);
+  }, [screen, modifications.shadow, modifications.splitMode]);
+
   return (
     <main className={`game-shell ${screen}`}>
-      {screen !== 'result' && screen !== 'colors' && (
+      {screen !== 'result' && screen !== 'colors' && screen !== 'mods' && (
         <section className="stage" ref={stageRef}>
           <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} aria-label="Dash practice level" />
-          {screen !== 'playing' && <div className="scanline" />}
+          {screen !== 'playing' && screen !== 'paused' && <div className="scanline" />}
+          {screen === 'playing' && (
+            <button className="pause-button" onClick={pauseRun} type="button">
+              Пауза
+            </button>
+          )}
+          {screen === 'paused' && (
+            <div className="pause-overlay" role="dialog" aria-label="Пауза">
+              <span>Пауза</span>
+              <div className="pause-actions">
+                <button className="start-button" onClick={resumeRun} type="button">
+                  Старт
+                </button>
+                <button className="menu-button" onClick={returnToMenu} type="button">
+                  Меню
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -726,21 +1497,33 @@ export default function App() {
         <section className="control-panel" aria-label="Настройки тренировки">
           <div>
             <p className="eyebrow">Dash Practice</p>
-            <h1>Тренировка режимов</h1>
           </div>
 
-          <div className="picker">
-            {MODES.map((mode) => (
-              <button
-                className={choice.mode === mode.id ? 'option active' : 'option'}
-                key={mode.id}
-                onClick={() => setChoice((current) => ({ ...current, mode: mode.id }))}
-                type="button"
-              >
-                <span>{mode.title}</span>
-                <small>{mode.subtitle}</small>
-              </button>
-            ))}
+          <div className="menu-action-row">
+          <button
+            className="option mode-trigger"
+            onClick={() => {
+              setSpeedPickerOpen(false);
+              setModePickerOpen(true);
+            }}
+            type="button"
+          >
+            <span>Режимы</span>
+            <small>{selectedMode.title}</small>
+          </button>
+
+          <button
+            className="option mode-trigger"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(true);
+            }}
+            type="button"
+          >
+            <span>Скорость</span>
+            <small>{selectedSpeed.title}</small>
+          </button>
+
           </div>
 
           <div className="difficulty-row">
@@ -765,10 +1548,95 @@ export default function App() {
           <button className="start-button" onClick={startRun} type="button">
             Старт
           </button>
-          <button className="menu-button" onClick={() => setScreen('colors')} type="button">
+          <div className="secondary-action-row">
+          <button
+            className="menu-button"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setScreen('colors');
+            }}
+            type="button"
+          >
             Цвета
           </button>
+            <button
+              className="menu-button"
+              onClick={() => {
+                setModePickerOpen(false);
+                setSpeedPickerOpen(false);
+                setScreen('mods');
+              }}
+              type="button"
+            >
+              Модификации
+            </button>
+          </div>
         </section>
+      )}
+
+      {screen === 'menu' && modePickerOpen && (
+        <div className="modal-backdrop" onClick={() => setModePickerOpen(false)} role="presentation">
+          <section className="mode-modal" aria-label="Выбор режима" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">Dash Practice</p>
+              <h1>Режимы</h1>
+            </div>
+
+            <div className="picker">
+              {MODES.map((mode) => (
+                <button
+                  className={choice.mode === mode.id ? 'option active' : 'option'}
+                  key={mode.id}
+                  onClick={() => {
+                    setChoice((current) => ({ ...current, mode: mode.id }));
+                    setModePickerOpen(false);
+                  }}
+                  type="button"
+                >
+                  <span>{mode.title}</span>
+                  <small>{mode.subtitle}</small>
+                </button>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => setModePickerOpen(false)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'menu' && speedPickerOpen && (
+        <div className="modal-backdrop" onClick={() => setSpeedPickerOpen(false)} role="presentation">
+          <section className="mode-modal" aria-label="Выбор скорости" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">Dash Practice</p>
+              <h1>Скорость</h1>
+            </div>
+
+            <div className="picker">
+              {SPEED_MODES.map((speed) => (
+                <button
+                  className={speedMode === speed.id ? 'option active' : 'option'}
+                  key={speed.id}
+                  onClick={() => {
+                    setSpeedMode(speed.id);
+                    setSpeedPickerOpen(false);
+                  }}
+                  type="button"
+                >
+                  <span>{speed.title}</span>
+                  <small>{Math.round(speed.multiplier * 100)}%</small>
+                </button>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => setSpeedPickerOpen(false)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
       )}
 
       {screen === 'colors' && (
@@ -797,6 +1665,46 @@ export default function App() {
                 </div>
               </div>
             ))}
+          </div>
+
+          <button className="start-button" onClick={returnToMenu} type="button">
+            Меню
+          </button>
+        </section>
+      )}
+
+      {screen === 'mods' && (
+        <section className="control-panel mods-panel" aria-label="Модификации">
+          <div>
+            <p className="eyebrow">Dash Practice</p>
+            <h1>Модификации</h1>
+          </div>
+
+          <div className="mods-list">
+            <button
+              className={modifications.upsideDown ? 'mod-option active' : 'mod-option'}
+              onClick={toggleUpsideDown}
+              type="button"
+            >
+              <span>Upside down</span>
+              <small>{modifications.upsideDown ? 'Включено' : 'Выключено'}</small>
+            </button>
+            <button
+              className={modifications.splitMode ? 'mod-option active' : 'mod-option'}
+              onClick={toggleSplitMode}
+              type="button"
+            >
+              <span>Split mode</span>
+              <small>{modifications.splitMode ? 'Включено' : 'Выключено'}</small>
+            </button>
+            <button
+              className={modifications.shadow ? 'mod-option active' : 'mod-option'}
+              onClick={toggleShadow}
+              type="button"
+            >
+              <span>Тень</span>
+              <small>{modifications.shadow ? 'Включено' : 'Выключено'}</small>
+            </button>
           </div>
 
           <button className="start-button" onClick={returnToMenu} type="button">
