@@ -11,6 +11,10 @@ export function Auth() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!supabase) {
+      setMessage('Supabase не настроен. Добавь VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY.');
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {

@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import type { Session, User } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 
 type Mode = 'wave' | 'flipWave' | 'laser' | 'orbit' | 'ship' | 'ufo';
 type Difficulty = 'easy' | 'medium' | 'hard';
 type SpeedMode = 'normal' | 'fast' | 'superfast';
-type Screen = 'menu' | 'playing' | 'paused' | 'result' | 'colors' | 'mods';
+type Screen = 'home' | 'menu' | 'playing' | 'paused' | 'result' | 'colors' | 'mods';
+type AuthMode = 'signin' | 'signup';
 
 type Choice = {
   mode: Mode;
@@ -60,9 +64,48 @@ type ShadowSnapshot = Player & {
   worldX: number;
 };
 
+type PracticeCheckpoint = {
+  time: number;
+  player: Player;
+  splitPlayer: Player | null;
+  worldX: number;
+  y: number;
+};
+
+type DeathAnimation = {
+  startedAt: number;
+  progress: number;
+  player: Player;
+  splitPlayer: Player | null;
+  levelProgress: number;
+};
+
+type WinAnimation = {
+  startedAt: number;
+  progress: number;
+  player: Player;
+  splitPlayer: Player | null;
+};
+
+type TeleportEffect = {
+  startedAt: number;
+  progress: number;
+  from: Point;
+  to: Point;
+  splitFrom: Point | null;
+  splitTo: Point | null;
+};
+
 type RecordMap = Record<string, number>;
 
 type ColorSettings = Record<Mode | 'trail', string>;
+
+type HomePreview = {
+  choice: Choice;
+  elapsed: number;
+  percent: number;
+  colors: ColorSettings;
+};
 
 type ModificationSettings = {
   upsideDown: boolean;
@@ -139,39 +182,10 @@ const COLOR_TARGETS: Array<{ id: keyof ColorSettings; title: string }> = [
 ];
 
 const CONTROL_KEYS = new Set([
-  'KeyQ',
   'KeyW',
-  'KeyE',
-  'KeyR',
-  'KeyT',
-  'KeyY',
-  'KeyU',
-  'KeyI',
-  'KeyO',
-  'KeyP',
-  'BracketLeft',
-  'BracketRight',
   'KeyA',
   'KeyS',
   'KeyD',
-  'KeyF',
-  'KeyG',
-  'KeyH',
-  'KeyJ',
-  'KeyK',
-  'KeyL',
-  'Semicolon',
-  'Quote',
-  'KeyZ',
-  'KeyX',
-  'KeyC',
-  'KeyV',
-  'KeyB',
-  'KeyN',
-  'KeyM',
-  'Comma',
-  'Period',
-  'Slash',
   'Space',
   'ArrowUp',
   'ArrowDown',
@@ -187,6 +201,14 @@ const HEIGHT = 540;
 const PLAYER_DEFAULT_X = 142;
 const PLAYER_SHADOW_MAX_X = WIDTH - 116;
 const SHADOW_DELAY_MS = 2_000;
+const SHADOW_FADE_MS = 600;
+const PRACTICE_CHECKPOINT_COOLDOWN_MS = 2_000;
+const PRACTICE_AUTO_CHECKPOINT_MS = 5_000;
+const PRACTICE_RESPAWN_DELAY_MS = 500;
+const DEATH_ANIMATION_MS = 900;
+const WIN_ANIMATION_MS = 1_000;
+const TELEPORT_EFFECT_MS = 520;
+const MODAL_FADE_OUT_MS = 180;
 const PLAYER_MIN_Y = 32;
 const PLAYER_MAX_Y = HEIGHT - 82;
 const PLAYER_CENTER_Y = (PLAYER_MIN_Y + PLAYER_MAX_Y) / 2;
@@ -195,6 +217,139 @@ const TRAIL_MAX_POINTS = 360;
 const ORBIT_RADIUS_X = 42;
 const ORBIT_RADIUS_Y = 78;
 const ORBIT_SPEED = 3.35;
+
+function pickDifferent<T>(items: T[], previous?: T) {
+  const variants = previous === undefined ? items : items.filter((item) => item !== previous);
+  return variants[Math.floor(Math.random() * variants.length)] ?? items[0];
+}
+
+function createHomePreview(previous?: HomePreview): HomePreview {
+  const mode = pickDifferent(
+    MODES.map((item) => item.id),
+    previous?.choice.mode,
+  );
+  const difficulty = DIFFICULTIES[Math.floor(Math.random() * DIFFICULTIES.length)].id;
+  const previewLevel = buildLevel({ mode, difficulty }, 'normal', false);
+  const percent = 15 + Math.floor(Math.random() * 66);
+  const palette = COLOR_PALETTE.map((color) => color.value);
+  const previousTrail = previous?.colors.trail;
+  const previousModel = previous ? getModeColor(previous.colors, previous.choice.mode) : undefined;
+  const trailColor = pickDifferent(palette, previousTrail);
+  const modelColor = pickDifferent(
+    palette.filter((color) => color !== trailColor),
+    previousModel,
+  );
+  return {
+    choice: { mode, difficulty },
+    elapsed: (previewLevel.duration * percent) / 100,
+    percent,
+    colors: {
+      ...DEFAULT_COLORS,
+      trail: trailColor,
+      [mode]: modelColor,
+    },
+  };
+}
+
+function getPreviewPathY(mode: Mode, elapsed: number) {
+  const center = PLAYER_CENTER_Y;
+  if (mode === 'wave' || mode === 'flipWave') {
+    const period = mode === 'wave' ? 680 : 560;
+    const phase = ((elapsed % period) + period) % period;
+    const t = phase / period;
+    const triangle = t < 0.5 ? t * 2 : 2 - t * 2;
+    return center - 108 + triangle * 216;
+  }
+  if (mode === 'ufo') {
+    const period = 820;
+    const phase = (((elapsed % period) + period) % period) / period;
+    const hop = 1 - (phase * 2 - 1) ** 2;
+    return center + 94 - hop * 158 + Math.sin(elapsed / 1320) * 20;
+  }
+  if (mode === 'ship') {
+    return center + Math.sin(elapsed / 520) * 92 + Math.sin(elapsed / 1240) * 28;
+  }
+  if (mode === 'laser') {
+    return center + Math.sin(elapsed / 700) * 104;
+  }
+  if (mode === 'orbit') {
+    return center + Math.sin(elapsed / 420) * 78;
+  }
+  return center;
+}
+
+function getWavePreviewDirection(mode: Mode, elapsed: number) {
+  const period = mode === 'wave' ? 680 : 560;
+  const phase = (((elapsed % period) + period) % period) / period;
+  return phase < 0.5 ? 1 : -1;
+}
+
+function getSafePreviewY(level: Level, cameraX: number, baseY: number) {
+  const playerWorldX = cameraX + PLAYER_DEFAULT_X - 140;
+  const marginX = 72;
+  const marginY = 54;
+  const minY = PLAYER_MIN_Y + 18;
+  const maxY = PLAYER_MAX_Y - 18;
+  const blockers = level.obstacles.filter(
+    (obstacle) => playerWorldX >= obstacle.x - marginX && playerWorldX <= obstacle.x + obstacle.width + marginX,
+  );
+  const candidates = [
+    baseY,
+    PLAYER_CENTER_Y,
+    PLAYER_CENTER_Y - 116,
+    PLAYER_CENTER_Y + 116,
+    PLAYER_MIN_Y + 84,
+    PLAYER_MAX_Y - 84,
+    PLAYER_CENTER_Y - 58,
+    PLAYER_CENTER_Y + 58,
+    ...Array.from({ length: 13 }, (_, index) => minY + ((maxY - minY) * index) / 12),
+  ].map((candidate) => clamp(candidate, minY, maxY));
+
+  return (
+    candidates.find((candidate) =>
+      blockers.every((obstacle) => candidate < obstacle.y - marginY || candidate > obstacle.y + obstacle.height + marginY),
+    ) ?? PLAYER_CENTER_Y
+  );
+}
+
+function buildPreviewTrail(mode: Mode, cameraX: number, elapsed: number, currentY: number) {
+  if (mode === 'wave' || mode === 'flipWave') {
+    const minY = PLAYER_MIN_Y + 38;
+    const maxY = PLAYER_MAX_Y - 38;
+    let y = clamp(currentY, minY, maxY);
+    let direction = getWavePreviewDirection(mode, elapsed);
+    const slope = Math.tan(0.68);
+
+    return Array.from({ length: 52 }, (_, index) => {
+      if (index > 0) {
+        y -= direction * 18 * slope;
+        if (y <= minY) {
+          y = minY + (minY - y);
+          direction = -direction;
+        }
+        if (y >= maxY) {
+          y = maxY - (y - maxY);
+          direction = -direction;
+        }
+      }
+
+      return {
+        x: cameraX + PLAYER_DEFAULT_X - 140 - index * 18,
+        y,
+      };
+    });
+  }
+
+  const baseY = getPreviewPathY(mode, elapsed);
+  const yOffset = currentY - baseY;
+  return Array.from({ length: 52 }, (_, index) => {
+    const pointElapsed = elapsed - index * 58;
+    return {
+      x: cameraX + PLAYER_DEFAULT_X - 140 - index * 18,
+      y: clamp(getPreviewPathY(mode, pointElapsed) + yOffset, PLAYER_MIN_Y + 8, PLAYER_MAX_Y - 8),
+    };
+  });
+}
 
 function getPlayerStartX(shadowEnabled: boolean, levelSpeed: number) {
   return shadowEnabled
@@ -430,6 +585,84 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
           y: center + (section % 2 === 0 ? 64 : -96),
           width: 36,
           height: 36,
+          color: '#d9e2ec',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
+  if (!splitMode && choice.mode === 'orbit' && choice.difficulty === 'hard') {
+    const spacing = 470;
+    const width = 54;
+    const centers = [270, 230, 304, 352, 286, 214, 176, 248, 322, 364, 296, 222];
+
+    for (let x = 900; x < levelLength - 900; x += spacing) {
+      const section = Math.floor((x - 900) / spacing);
+      const center =
+        centers[section % centers.length] +
+        Math.sin(section * 0.72) * 14 +
+        Math.sin(x / 760) * 8;
+      const gap = 218 + Math.sin(section * 0.8) * 12;
+      const topHeight = Math.max(58, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      const spikeHeight = 32;
+      const spikeWidth = 38;
+      const fromTop = section % 5 === 1 || section % 5 === 4;
+      for (let index = 0; index < (section % 6 === 2 ? 3 : 2); index += 1) {
+        obstacles.push({
+          kind: 'spike',
+          direction: fromTop ? 'down' : 'up',
+          x: x + 72 + index * (spikeWidth + 10),
+          y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
+          width: spikeWidth,
+          height: spikeHeight,
+          color: fromTop ? '#2f4f74' : '#8f3d58',
+        });
+      }
+
+      obstacles.push({
+        kind: 'saw',
+        x: x + 178,
+        y: center + (section % 4 === 0 ? -82 : section % 4 === 1 ? 66 : section % 4 === 2 ? -46 : 34),
+        width: 34,
+        height: 34,
+        color: '#d9e2ec',
+      });
+
+      if (section % 3 !== 1) {
+        obstacles.push({
+          x: x + 264,
+          y: center + (section % 2 === 0 ? 76 : -118),
+          width: 44,
+          height: 34,
+          color: '#3d2c8d',
+        });
+      }
+
+      obstacles.push({
+        kind: 'spikedBlock',
+        x: x + 350,
+        y: center + (section % 4 === 0 ? 58 : section % 4 === 1 ? -106 : section % 4 === 2 ? 88 : -82),
+        width: 40,
+        height: 38,
+        color: '#6842c2',
+      });
+
+      if (section % 4 === 1 || section % 7 === 4) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + 410,
+          y: center + (section % 2 === 0 ? -118 : 96),
+          width: 30,
+          height: 30,
           color: '#d9e2ec',
         });
       }
@@ -980,6 +1213,182 @@ function drawHitbox(ctx: CanvasRenderingContext2D, player: Player, mode: Mode) {
   ctx.restore();
 }
 
+function drawDeathEffect(
+  ctx: CanvasRenderingContext2D,
+  player: Player,
+  modelColor: string,
+  trailColor: string,
+  progress: number,
+) {
+  const particleColors = [modelColor, trailColor, '#ffffff'];
+  const eased = 1 - (1 - progress) ** 3;
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  for (let index = 0; index < 14; index += 1) {
+    const angle = (index / 14) * Math.PI * 2 + player.angle * 0.35;
+    const distance = 10 + eased * (34 + (index % 5) * 8);
+    const size = 5 + (index % 3) * 2;
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle + progress * 5);
+    ctx.globalAlpha = Math.max(0, 1 - progress * 0.92);
+    ctx.fillStyle = particleColors[index % particleColors.length];
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 14;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.restore();
+  }
+
+  ctx.font = '900 18px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let index = 0; index < 18; index += 1) {
+    const angle = (index / 18) * Math.PI * 2 + progress * 1.7;
+    const distance = 28 + eased * (30 + (index % 4) * 7);
+    const flicker = Math.sin(progress * 34 + index * 1.7);
+    const digit = Math.floor(progress * 12 + index) % 2 === 0 ? '1' : '0';
+    ctx.globalAlpha = clamp(0.28 + Math.abs(flicker) * 0.62 - progress * 0.16, 0, 0.95);
+    ctx.fillStyle = digit === '1' ? modelColor : trailColor;
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 14;
+    ctx.fillText(digit, Math.cos(angle) * distance, Math.sin(angle) * distance);
+  }
+
+  ctx.globalAlpha = Math.max(0, 0.55 - progress * 0.55);
+  ctx.strokeStyle = trailColor;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 7]);
+  ctx.beginPath();
+  ctx.arc(0, 0, 22 + eased * 54, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTeleportEffect(
+  ctx: CanvasRenderingContext2D,
+  effect: TeleportEffect,
+  cameraX: number,
+  modelColor: string,
+  trailColor: string,
+) {
+  const drawBurst = (point: Point, reverse = false) => {
+    const screenX = point.x - cameraX + 140;
+    if (screenX < -120 || screenX > WIDTH + 120) return;
+    const eased = 1 - (1 - effect.progress) ** 3;
+    const alpha = Math.max(0, 1 - effect.progress);
+    ctx.save();
+    ctx.translate(screenX, point.y);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = reverse ? trailColor : modelColor;
+    ctx.fillStyle = reverse ? modelColor : trailColor;
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = 16;
+    ctx.lineWidth = 3;
+    for (let index = 0; index < 3; index += 1) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 18 + eased * (22 + index * 14), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.font = '900 16px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let index = 0; index < 10; index += 1) {
+      const angle = (index / 10) * Math.PI * 2 + effect.progress * 2.6;
+      const distance = 20 + eased * (20 + (index % 3) * 8);
+      ctx.globalAlpha = alpha * (0.4 + (index % 2) * 0.32);
+      ctx.fillStyle = index % 2 === 0 ? trailColor : modelColor;
+      ctx.fillText(index % 2 === 0 ? '0' : '1', Math.cos(angle) * distance, Math.sin(angle) * distance);
+    }
+    ctx.restore();
+  };
+
+  const drawBeam = (from: Point, to: Point) => {
+    const fromX = from.x - cameraX + 140;
+    const toX = to.x - cameraX + 140;
+    if ((fromX < -160 && toX < -160) || (fromX > WIDTH + 160 && toX > WIDTH + 160)) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 0.45 - effect.progress * 0.45);
+    ctx.strokeStyle = trailColor;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 10]);
+    ctx.shadowColor = trailColor;
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(fromX, from.y);
+    ctx.lineTo(toX, to.y);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  drawBeam(effect.from, effect.to);
+  drawBurst(effect.from, true);
+  drawBurst(effect.to);
+  if (effect.splitFrom && effect.splitTo) {
+    drawBeam(effect.splitFrom, effect.splitTo);
+    drawBurst(effect.splitFrom, true);
+    drawBurst(effect.splitTo);
+  }
+}
+
+function drawWinEffect(
+  ctx: CanvasRenderingContext2D,
+  player: Player,
+  mode: Mode,
+  colors: ColorSettings,
+  progress: number,
+) {
+  const modelColor = getModeColor(colors, mode);
+  const trailColor = getTrailColor(colors);
+  const eased = 1 - (1 - progress) ** 3;
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  ctx.globalAlpha = Math.max(0, 0.82 - progress * 0.45);
+  ctx.strokeStyle = trailColor;
+  ctx.lineWidth = 3;
+  ctx.shadowColor = trailColor;
+  ctx.shadowBlur = 18;
+  for (let index = 0; index < 4; index += 1) {
+    ctx.beginPath();
+    ctx.arc(0, 0, 22 + eased * (34 + index * 18), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  for (let index = 0; index < 22; index += 1) {
+    const angle = (index / 22) * Math.PI * 2 + progress * 2.4;
+    const distance = 18 + eased * (48 + (index % 5) * 9);
+    const size = 4 + (index % 4);
+    ctx.save();
+    ctx.translate(Math.cos(angle) * distance, Math.sin(angle) * distance);
+    ctx.rotate(angle + progress * 4);
+    ctx.globalAlpha = Math.max(0, 1 - progress * 0.72);
+    ctx.fillStyle = index % 2 === 0 ? modelColor : trailColor;
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 14;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.restore();
+  }
+
+  ctx.font = '900 18px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let index = 0; index < 18; index += 1) {
+    const angle = (index / 18) * Math.PI * 2 - progress * 1.8;
+    const distance = 34 + eased * (36 + (index % 3) * 10);
+    ctx.globalAlpha = Math.max(0, 0.9 - progress * 0.4);
+    ctx.fillStyle = index % 2 === 0 ? trailColor : modelColor;
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 12;
+    ctx.fillText(index % 2 === 0 ? '1' : '0', Math.cos(angle) * distance, Math.sin(angle) * distance);
+  }
+
+  ctx.restore();
+}
+
 function drawGame(
   canvas: HTMLCanvasElement,
   level: Level,
@@ -994,9 +1403,15 @@ function drawGame(
   splitShadowSnapshot: ShadowSnapshot | null,
   shadowTeleportsLeft: number,
   shadowCooldownUntil: number,
+  practiceMode: boolean,
+  checkpoints: PracticeCheckpoint[],
+  deathAnimation: DeathAnimation | null,
+  winAnimation: WinAnimation | null,
   attempt: number,
   elapsed: number,
   inputActive: boolean,
+  showHud = true,
+  teleportEffect: TeleportEffect | null = null,
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -1034,6 +1449,32 @@ function drawGame(
   ctx.globalAlpha = 0.25;
   ctx.fillRect(0, HEIGHT - 56, WIDTH, 4);
   ctx.globalAlpha = 1;
+
+  const drawTrail = (points: TrailPoint[], color: string) => {
+    if (points.length <= 1) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      const screenX = point.x - cameraX + 140;
+      if (index === 0) {
+        ctx.moveTo(screenX, point.y);
+      } else {
+        ctx.lineTo(screenX, point.y);
+      }
+    });
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  if (!showHud) {
+    drawTrail(trail, getTrailColor(colors));
+  }
 
   level.obstacles.forEach((obstacle) => {
     const screenX = obstacle.x - cameraX + 140;
@@ -1099,6 +1540,10 @@ function drawGame(
 
     if (obstacle.kind === 'spikedBlock') {
       const tooth = 9;
+      const toothPadding = 4;
+      const toothCount = Math.max(1, Math.floor((obstacle.width - toothPadding * 2) / tooth));
+      const teethWidth = toothCount * tooth;
+      const teethStartX = screenX + (obstacle.width - teethWidth) / 2;
       ctx.save();
       ctx.fillStyle = obstacle.color;
       ctx.shadowColor = obstacle.color;
@@ -1109,7 +1554,8 @@ function drawGame(
       ctx.lineWidth = 2;
       ctx.strokeRect(screenX + 1, obstacle.y + 1, obstacle.width - 2, obstacle.height - 2);
       ctx.fillStyle = '#d9e2ec';
-      for (let px = screenX + 4; px < screenX + obstacle.width - 4; px += tooth) {
+      for (let index = 0; index < toothCount; index += 1) {
+        const px = teethStartX + index * tooth;
         ctx.beginPath();
         ctx.moveTo(px, obstacle.y);
         ctx.lineTo(px + tooth / 2, obstacle.y - tooth);
@@ -1146,29 +1592,28 @@ function drawGame(
     ctx.shadowBlur = 0;
   });
 
-  const drawTrail = (points: TrailPoint[], color: string) => {
-    if (points.length <= 1) return;
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    points.forEach((point, index) => {
-      const screenX = point.x - cameraX + 140;
-      if (index === 0) {
-        ctx.moveTo(screenX, point.y);
-      } else {
-        ctx.lineTo(screenX, point.y);
-      }
-    });
-    ctx.stroke();
-    ctx.restore();
-  };
+  if (showHud) {
+    drawTrail(trail, getTrailColor(colors));
+  }
 
-  drawTrail(trail, getTrailColor(colors));
+  if (practiceMode) {
+    checkpoints.forEach((checkpoint) => {
+      const checkpointX = checkpoint.worldX - cameraX + 140;
+      if (checkpointX < -40 || checkpointX > WIDTH + 40) return;
+      ctx.save();
+      ctx.translate(checkpointX, checkpoint.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#facc15';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#facc15';
+      ctx.shadowBlur = 12;
+      ctx.fillRect(-8, -8, 16, 16);
+      ctx.shadowBlur = 0;
+      ctx.strokeRect(-8, -8, 16, 16);
+      ctx.restore();
+    });
+  }
 
   const drawOrbitGuide = (orbitPlayer: Player | null, splitDirection: 1 | -1) => {
     if (choice.mode !== 'orbit' || !orbitPlayer) return;
@@ -1197,6 +1642,9 @@ function drawGame(
     if (!modifications.shadow || !snapshot) return;
     const shadowX = snapshot.worldX - cameraX + 140;
     if (shadowX <= -80 || shadowX >= WIDTH + 80) return;
+    const shadowVisibleSince = Math.max(SHADOW_DELAY_MS, shadowCooldownUntil);
+    const fade = clamp((elapsed - shadowVisibleSince) / SHADOW_FADE_MS, 0, 1);
+    if (fade <= 0) return;
     const shadowColors: ColorSettings = {
       trail: 'rgba(156, 163, 175, 0.58)',
       wave: 'rgba(156, 163, 175, 0.58)',
@@ -1207,7 +1655,7 @@ function drawGame(
       ufo: 'rgba(156, 163, 175, 0.58)',
     };
     ctx.save();
-    ctx.globalAlpha = 0.58;
+    ctx.globalAlpha = 0.58 * fade;
     drawPlayer(ctx, { ...snapshot, x: shadowX }, choice.mode, false, shadowColors, upsideDown);
     ctx.restore();
   };
@@ -1218,8 +1666,25 @@ function drawGame(
     drawShadow(splitShadowSnapshot, !modifications.upsideDown);
   }
 
-  drawPlayer(ctx, player, choice.mode, inputActive, colors, modifications.upsideDown);
-  if (modifications.showHitboxes) {
+  if (teleportEffect) {
+    drawTeleportEffect(ctx, teleportEffect, cameraX, getModeColor(colors, choice.mode), getTrailColor(colors));
+  }
+
+  if (deathAnimation) {
+    drawDeathEffect(
+      ctx,
+      deathAnimation.player,
+      getModeColor(colors, choice.mode),
+      getTrailColor(colors),
+      deathAnimation.progress,
+    );
+  } else {
+    drawPlayer(ctx, player, choice.mode, inputActive, colors, modifications.upsideDown);
+    if (winAnimation) {
+      drawWinEffect(ctx, player, choice.mode, colors, winAnimation.progress);
+    }
+  }
+  if (modifications.showHitboxes && !deathAnimation) {
     drawHitbox(ctx, player, choice.mode);
   }
 
@@ -1230,20 +1695,35 @@ function drawGame(
       [choice.mode]: getTrailColor(colors),
     };
     drawTrail(splitTrail, splitColors.trail);
-    drawPlayer(ctx, splitPlayer, choice.mode, inputActive, splitColors, !modifications.upsideDown);
-    if (modifications.showHitboxes) {
+    if (deathAnimation?.splitPlayer) {
+      drawDeathEffect(
+        ctx,
+        deathAnimation.splitPlayer,
+        getModeColor(splitColors, choice.mode),
+        getTrailColor(splitColors),
+        deathAnimation.progress,
+      );
+    } else {
+      drawPlayer(ctx, splitPlayer, choice.mode, inputActive, splitColors, !modifications.upsideDown);
+      if (winAnimation?.splitPlayer) {
+        drawWinEffect(ctx, splitPlayer, choice.mode, splitColors, winAnimation.progress);
+      }
+    }
+    if (modifications.showHitboxes && !deathAnimation) {
       drawHitbox(ctx, splitPlayer, choice.mode);
     }
   }
 
-  ctx.fillStyle = 'rgba(255,255,255,0.16)';
-  ctx.fillRect(24, 22, WIDTH - 48, 10);
-  ctx.fillStyle = accent;
-  ctx.fillRect(24, 22, (WIDTH - 48) * progress, 10);
+  if (showHud) {
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(24, 22, WIDTH - 48, 10);
+    ctx.fillStyle = accent;
+    ctx.fillRect(24, 22, (WIDTH - 48) * progress, 10);
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '700 24px Inter, system-ui, sans-serif';
-  ctx.fillText(`${Math.round(progress * 100)}%`, 24, 66);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 24px Inter, system-ui, sans-serif';
+    ctx.fillText(`${Math.round(progress * 100)}%`, 24, 66);
+  }
 
   if (modifications.shadow) {
     const cooldownLeft = Math.max(0, Math.ceil(shadowCooldownUntil - elapsed));
@@ -1266,7 +1746,7 @@ function drawGame(
     ctx.textAlign = 'start';
   }
 
-  if (progress < 0.045 && attempt > 0) {
+  if (showHud && progress < 0.045 && attempt > 0) {
     const fade = clamp((0.045 - progress) / 0.02, 0, 1);
     ctx.save();
     ctx.globalAlpha = Math.min(1, fade);
@@ -1360,8 +1840,32 @@ function updatePlayer(
   return next;
 }
 
+async function saveAccount(user: User) {
+  if (!supabase) return;
+
+  const metadata = user.user_metadata;
+  const provider = user.app_metadata.provider;
+  const { error } = await supabase.from('accounts').upsert(
+    {
+      id: user.id,
+      email: user.email ?? null,
+      display_name: metadata.full_name ?? metadata.name ?? metadata.user_name ?? null,
+      avatar_url: metadata.avatar_url ?? metadata.picture ?? null,
+      provider: typeof provider === 'string' ? provider : null,
+      last_sign_in_at: user.last_sign_in_at ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' },
+  );
+
+  if (error) {
+    console.warn('Не удалось сохранить аккаунт в Supabase:', error.message);
+  }
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const homePreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -1385,42 +1889,148 @@ export default function App() {
   const splitShadowSnapshotRef = useRef<ShadowSnapshot | null>(null);
   const shadowTeleportsLeftRef = useRef(5);
   const shadowCooldownUntilRef = useRef(0);
+  const checkpointsRef = useRef<PracticeCheckpoint[]>([]);
+  const lastCheckpointAtRef = useRef(-PRACTICE_CHECKPOINT_COOLDOWN_MS);
+  const nextAutoCheckpointAtRef = useRef(PRACTICE_AUTO_CHECKPOINT_MS);
+  const practiceRespawnUntilRef = useRef(0);
+  const deathAnimationRef = useRef<DeathAnimation | null>(null);
+  const winAnimationRef = useRef<WinAnimation | null>(null);
+  const teleportEffectRef = useRef<TeleportEffect | null>(null);
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
+  const [homePreview, setHomePreview] = useState<HomePreview>(() => createHomePreview());
   const [speedMode, setSpeedMode] = useState<SpeedMode>('normal');
-  const [screen, setScreen] = useState<Screen>('menu');
+  const [practiceMode, setPracticeMode] = useState(false);
+  const [screen, setScreen] = useState<Screen>('home');
   const [records, setRecords] = useState<RecordMap>(() => loadRecords());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
   const [lastResult, setLastResult] = useState<{ progress: number; completed: boolean } | null>(null);
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
+  const [difficultyPickerOpen, setDifficultyPickerOpen] = useState(false);
+  const [controlsPickerOpen, setControlsPickerOpen] = useState(false);
+  const [menuAnimationDisabled, setMenuAnimationDisabled] = useState(false);
+  const [modalClosing, setModalClosing] = useState(false);
+  const [checkpointButtonActive, setCheckpointButtonActive] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
 
   const level = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
+  const homePreviewLevel = useMemo(() => buildLevel(homePreview.choice, 'normal', false), [homePreview.choice]);
   const best = records[recordKey(choice)] ?? 0;
   const selectedMode = MODES.find((mode) => mode.id === choice.mode) ?? MODES[0];
   const selectedSpeed = SPEED_MODES.find((speed) => speed.id === speedMode) ?? SPEED_MODES[0];
+  const selectedDifficulty = DIFFICULTIES.find((difficulty) => difficulty.id === choice.difficulty) ?? DIFFICULTIES[0];
+  const previewMode = MODES.find((mode) => mode.id === homePreview.choice.mode) ?? MODES[0];
+  const userEmail = session?.user.email ?? '';
+
+  const openAuth = (mode: AuthMode) => {
+    setModalClosing(false);
+    setAuthMode(mode);
+    setAuthMessage('');
+  };
+
+  const closeAuth = () => {
+    setAuthMode(null);
+    setAuthMessage('');
+    setAuthPassword('');
+  };
+
+  const closeModalWithFade = (close: () => void) => {
+    if (modalClosing) return;
+    setModalClosing(true);
+    window.setTimeout(() => {
+      close();
+      setModalClosing(false);
+    }, MODAL_FADE_OUT_MS);
+  };
+
+  const continueAsGuest = () => {
+    closeAuth();
+    setMenuAnimationDisabled(false);
+    setScreen('menu');
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!authMode) return;
+    if (!supabase) {
+      setAuthMessage('Supabase не настроен. Можно играть без аккаунта.');
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthMessage('');
+    const credentials = { email: authEmail.trim(), password: authPassword };
+    const { data, error } =
+      authMode === 'signup'
+        ? await supabase.auth.signUp(credentials)
+        : await supabase.auth.signInWithPassword(credentials);
+
+    if (error) {
+      setAuthMessage(error.message);
+    } else {
+      if (data.user) {
+        await saveAccount(data.user);
+      }
+      setAuthMessage(authMode === 'signup' ? 'Аккаунт создан. Если Supabase попросит подтверждение, проверь почту.' : '');
+      closeAuth();
+      setMenuAnimationDisabled(false);
+      setScreen('menu');
+    }
+    setAuthBusy(false);
+  };
+
+  const signInWithGoogle = async () => {
+    if (!supabase) {
+      setAuthMessage('Supabase не настроен. Можно играть без аккаунта.');
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthMessage('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      setAuthMessage(error.message);
+      setAuthBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    setSession(null);
+    closeAuth();
+    setScreen('home');
+  };
 
   const finishRun = useCallback(
-    (progress: number, completed: boolean) => {
+    (progress: number, completed: boolean, saveProgress = true) => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
-      const saved = saveRecord(choice, completed ? 100 : progress);
-      setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
+      if (saveProgress) {
+        const saved = saveRecord(choice, completed ? 100 : progress);
+        setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
+      }
       setLastResult({ progress: Math.round(completed ? 100 : progress), completed });
       setScreen('result');
     },
     [choice],
   );
 
-  const startRun = () => {
-    setModePickerOpen(false);
-    setSpeedPickerOpen(false);
-    attemptRef.current += 1;
-    elapsedRef.current = 0;
-    lastTimeRef.current = 0;
-    inputRef.current = false;
-    ufoJumpQueuedRef.current = false;
+  const resetRunState = () => {
     trailRef.current = [];
     splitTrailRef.current = [];
     shadowHistoryRef.current = [];
@@ -1429,6 +2039,95 @@ export default function App() {
     splitShadowSnapshotRef.current = null;
     shadowTeleportsLeftRef.current = 5;
     shadowCooldownUntilRef.current = 0;
+    winAnimationRef.current = null;
+    teleportEffectRef.current = null;
+  };
+
+  const addPracticeCheckpoint = (force = false) => {
+    if (!practiceMode || screen !== 'playing') return false;
+    if (!force && elapsedRef.current - lastCheckpointAtRef.current < PRACTICE_CHECKPOINT_COOLDOWN_MS) return false;
+    const cameraX = (elapsedRef.current / 1000) * level.speed;
+    const player = playerRef.current;
+    const splitPlayer = modifications.splitMode ? splitPlayerRef.current : null;
+    checkpointsRef.current = [
+      ...checkpointsRef.current,
+      {
+        time: elapsedRef.current,
+        player: { ...player },
+        splitPlayer: splitPlayer ? { ...splitPlayer } : null,
+        worldX: cameraX + player.x - 140,
+        y: player.y,
+      },
+    ];
+    lastCheckpointAtRef.current = elapsedRef.current;
+    return true;
+  };
+
+  const removePracticeCheckpoint = () => {
+    if (!practiceMode || screen !== 'playing') return;
+    checkpointsRef.current = checkpointsRef.current.slice(0, -1);
+  };
+
+  const markCheckpointButtonActive = () => {
+    setCheckpointButtonActive(true);
+    window.setTimeout(() => setCheckpointButtonActive(false), 180);
+  };
+
+  const respawnPractice = () => {
+    const checkpoint = checkpointsRef.current[checkpointsRef.current.length - 1];
+    attemptRef.current += 1;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
+    resetRunState();
+
+    if (checkpoint) {
+      elapsedRef.current = checkpoint.time;
+      playerRef.current = { ...checkpoint.player };
+      if (checkpoint.splitPlayer) {
+        splitPlayerRef.current = { ...checkpoint.splitPlayer };
+      }
+      nextAutoCheckpointAtRef.current = checkpoint.time + PRACTICE_AUTO_CHECKPOINT_MS;
+    } else {
+      elapsedRef.current = 0;
+      const playerStartX = getPlayerStartX(modifications.shadow, level.speed);
+      playerRef.current = {
+        x: playerStartX,
+        y: modifications.splitMode ? PLAYER_CENTER_Y - SPLIT_PLAYER_OFFSET : PLAYER_CENTER_Y,
+        vy: 0,
+        angle: 0,
+        cooldown: 0,
+      };
+      splitPlayerRef.current = {
+        x: playerStartX,
+        y: PLAYER_CENTER_Y + SPLIT_PLAYER_OFFSET,
+        vy: 0,
+        angle: 0,
+        cooldown: 0,
+      };
+      nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
+    }
+
+    lastTimeRef.current = 0;
+    practiceRespawnUntilRef.current = performance.now() + PRACTICE_RESPAWN_DELAY_MS;
+  };
+
+  const startRun = () => {
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    attemptRef.current += 1;
+    elapsedRef.current = 0;
+    lastTimeRef.current = 0;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    resetRunState();
+    checkpointsRef.current = [];
+    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
+    practiceRespawnUntilRef.current = 0;
     const playerStartX = getPlayerStartX(modifications.shadow, level.speed);
     playerRef.current = {
       x: playerStartX,
@@ -1451,6 +2150,9 @@ export default function App() {
   const pauseRun = () => {
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
+    practiceRespawnUntilRef.current = 0;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
     setScreen('paused');
   };
 
@@ -1467,9 +2169,49 @@ export default function App() {
     }
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
+    practiceRespawnUntilRef.current = 0;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    setMenuAnimationDisabled(false);
     setScreen('menu');
+  };
+
+  const closeMenuWindow = () => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    practiceRespawnUntilRef.current = 0;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    setMenuAnimationDisabled(true);
+    setScreen('menu');
+  };
+
+  const returnToHome = () => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    practiceRespawnUntilRef.current = 0;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    closeAuth();
+    setScreen('home');
   };
 
   const updateColor = (target: keyof ColorSettings, value: string) => {
@@ -1516,6 +2258,127 @@ export default function App() {
     if (screen !== 'playing') return;
 
     const tick = (time: number) => {
+      const teleportEffect = teleportEffectRef.current;
+      if (teleportEffect) {
+        const progress = clamp((time - teleportEffect.startedAt) / TELEPORT_EFFECT_MS, 0, 1);
+        teleportEffectRef.current = progress >= 1 ? null : { ...teleportEffect, progress };
+      }
+
+      const deathAnimation = deathAnimationRef.current;
+      if (deathAnimation) {
+        const progress = clamp((time - deathAnimation.startedAt) / DEATH_ANIMATION_MS, 0, 1);
+        deathAnimationRef.current = { ...deathAnimation, progress };
+        lastTimeRef.current = time;
+        drawGame(
+          canvasRef.current!,
+          level,
+          choice,
+          colors,
+          modifications,
+          deathAnimation.player,
+          trailRef.current,
+          deathAnimation.splitPlayer,
+          splitTrailRef.current,
+          shadowSnapshotRef.current,
+          splitShadowSnapshotRef.current,
+          shadowTeleportsLeftRef.current,
+          shadowCooldownUntilRef.current,
+          practiceMode,
+          checkpointsRef.current,
+          deathAnimationRef.current,
+          null,
+          attemptRef.current,
+          elapsedRef.current,
+          false,
+          true,
+          teleportEffectRef.current,
+        );
+
+        if (progress >= 1) {
+          deathAnimationRef.current = null;
+          if (practiceMode) {
+            respawnPractice();
+            animationRef.current = requestAnimationFrame(tick);
+          } else {
+            finishRun(deathAnimation.levelProgress, false);
+          }
+          return;
+        }
+
+        animationRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const winAnimation = winAnimationRef.current;
+      if (winAnimation) {
+        const progress = clamp((time - winAnimation.startedAt) / WIN_ANIMATION_MS, 0, 1);
+        winAnimationRef.current = { ...winAnimation, progress };
+        lastTimeRef.current = time;
+        drawGame(
+          canvasRef.current!,
+          level,
+          choice,
+          colors,
+          modifications,
+          winAnimation.player,
+          trailRef.current,
+          winAnimation.splitPlayer,
+          splitTrailRef.current,
+          shadowSnapshotRef.current,
+          splitShadowSnapshotRef.current,
+          shadowTeleportsLeftRef.current,
+          shadowCooldownUntilRef.current,
+          practiceMode,
+          checkpointsRef.current,
+          null,
+          winAnimationRef.current,
+          attemptRef.current,
+          elapsedRef.current,
+          false,
+          true,
+          teleportEffectRef.current,
+        );
+
+        if (progress >= 1) {
+          winAnimationRef.current = null;
+          finishRun(100, true, !practiceMode);
+          return;
+        }
+
+        animationRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (practiceRespawnUntilRef.current > time) {
+        lastTimeRef.current = time;
+        drawGame(
+          canvasRef.current!,
+          level,
+          choice,
+          colors,
+          modifications,
+          playerRef.current,
+          trailRef.current,
+          modifications.splitMode ? splitPlayerRef.current : null,
+          splitTrailRef.current,
+          shadowSnapshotRef.current,
+          splitShadowSnapshotRef.current,
+          shadowTeleportsLeftRef.current,
+          shadowCooldownUntilRef.current,
+          practiceMode,
+          checkpointsRef.current,
+          null,
+          winAnimationRef.current,
+          attemptRef.current,
+          elapsedRef.current,
+          false,
+          true,
+          teleportEffectRef.current,
+        );
+        animationRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      practiceRespawnUntilRef.current = 0;
       const lastTime = lastTimeRef.current || time;
       const dt = Math.min((time - lastTime) / 1000, 0.032);
       lastTimeRef.current = time;
@@ -1586,6 +2449,10 @@ export default function App() {
       if (splitPlayer) {
         splitPlayerRef.current = splitPlayer;
       }
+      if (practiceMode && elapsedRef.current >= nextAutoCheckpointAtRef.current) {
+        addPracticeCheckpoint();
+        nextAutoCheckpointAtRef.current = elapsedRef.current + PRACTICE_AUTO_CHECKPOINT_MS;
+      }
       drawGame(
         canvasRef.current!,
         level,
@@ -1600,18 +2467,41 @@ export default function App() {
         splitShadowSnapshotRef.current,
         shadowTeleportsLeftRef.current,
         shadowCooldownUntilRef.current,
+        practiceMode,
+        checkpointsRef.current,
+        null,
+        winAnimationRef.current,
         attemptRef.current,
         elapsedRef.current,
         inputRef.current,
+        true,
+        teleportEffectRef.current,
       );
 
       if (hit) {
-        finishRun((elapsedRef.current / level.duration) * 100, false);
+        deathAnimationRef.current = {
+          startedAt: time,
+          progress: 0,
+          player,
+          splitPlayer,
+          levelProgress: (elapsedRef.current / level.duration) * 100,
+        };
+        inputRef.current = false;
+        ufoJumpQueuedRef.current = false;
+        animationRef.current = requestAnimationFrame(tick);
         return;
       }
 
       if (elapsedRef.current >= level.duration) {
-        finishRun(100, true);
+        winAnimationRef.current = {
+          startedAt: time,
+          progress: 0,
+          player,
+          splitPlayer,
+        };
+        inputRef.current = false;
+        ufoJumpQueuedRef.current = false;
+        animationRef.current = requestAnimationFrame(tick);
         return;
       }
 
@@ -1622,11 +2512,41 @@ export default function App() {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [choice, colors, finishRun, level, modifications, screen]);
+  }, [choice, colors, finishRun, level, modifications, practiceMode, screen]);
 
   useEffect(() => {
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      if (data.session) {
+        void saveAccount(data.session.user);
+        setMenuAnimationDisabled(false);
+        setScreen('menu');
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (nextSession) {
+        void saveAccount(nextSession.user);
+        setAuthMode(null);
+        setMenuAnimationDisabled(false);
+        setScreen('menu');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const isInteractiveTarget = (target: EventTarget | null) =>
+      target instanceof Element && Boolean(target.closest('button, input, select, textarea, a'));
     const isControlKey = (event: KeyboardEvent) => CONTROL_KEYS.has(event.code);
     const activate = (event: KeyboardEvent) => {
+      if (isInteractiveTarget(event.target)) return;
       if (!isControlKey(event)) return;
       event.preventDefault();
       if (!inputRef.current) {
@@ -1635,11 +2555,13 @@ export default function App() {
       inputRef.current = true;
     };
     const release = (event: KeyboardEvent) => {
+      if (isInteractiveTarget(event.target)) return;
       if (!isControlKey(event)) return;
       event.preventDefault();
       inputRef.current = false;
     };
     const activatePointer = (event: PointerEvent | TouchEvent) => {
+      if (isInteractiveTarget(event.target)) return;
       event.preventDefault();
       if (!inputRef.current) {
         ufoJumpQueuedRef.current = true;
@@ -1647,6 +2569,7 @@ export default function App() {
       inputRef.current = true;
     };
     const releasePointer = (event: PointerEvent | TouchEvent) => {
+      if (isInteractiveTarget(event.target)) return;
       event.preventDefault();
       inputRef.current = false;
     };
@@ -1667,31 +2590,55 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (screen === 'menu' && canvasRef.current) {
+    if (screen === 'home' && homePreviewCanvasRef.current) {
+      const cameraX = (homePreview.elapsed / homePreviewLevel.duration) * homePreviewLevel.speed * (homePreviewLevel.duration / 1000);
+      const baseY = getPreviewPathY(homePreview.choice.mode, homePreview.elapsed);
+      const y = getSafePreviewY(homePreviewLevel, cameraX, baseY);
+      const nextY = getPreviewPathY(homePreview.choice.mode, homePreview.elapsed + 58) + (y - baseY);
+      const isWavePreview = homePreview.choice.mode === 'wave' || homePreview.choice.mode === 'flipWave';
+      const previewPlayer: Player = {
+        x: PLAYER_DEFAULT_X,
+        y,
+        vy: 0,
+        angle: isWavePreview ? getWavePreviewDirection(homePreview.choice.mode, homePreview.elapsed) * 0.68 : clamp((nextY - y) / 90, -0.75, 0.75),
+        cooldown: 0,
+      };
+      const previewTrail = buildPreviewTrail(homePreview.choice.mode, cameraX, homePreview.elapsed, y);
       drawGame(
-        canvasRef.current,
-        level,
-        choice,
-        colors,
-        modifications,
-        playerRef.current,
-        [],
+        homePreviewCanvasRef.current,
+        homePreviewLevel,
+        homePreview.choice,
+        homePreview.colors,
+        DEFAULT_MODIFICATIONS,
+        previewPlayer,
+        previewTrail,
         null,
         [],
         null,
         null,
         shadowTeleportsLeftRef.current,
         0,
-        attemptRef.current,
-        0,
+        false,
+        [],
+        null,
+        null,
+        1,
+        homePreview.elapsed,
+        false,
         false,
       );
     }
-  }, [choice, colors, level, modifications, screen]);
+  }, [homePreview, homePreviewLevel, screen]);
+
+  useEffect(() => {
+    if (screen !== 'home') return;
+    const interval = window.setInterval(() => setHomePreview((previous) => createHomePreview(previous)), 4200);
+    return () => window.clearInterval(interval);
+  }, [screen]);
 
   useEffect(() => {
     attemptRef.current = 0;
-  }, [choice, speedMode, modifications.splitMode]);
+  }, [choice, speedMode, modifications.splitMode, practiceMode]);
 
   useEffect(() => {
     if (screen !== 'result') return;
@@ -1736,6 +2683,28 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
+    if (screen !== 'playing' || !practiceMode) return;
+
+    const handlePracticeKeys = (event: KeyboardEvent) => {
+      if (event.code !== 'KeyC' && event.code !== 'KeyD') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.repeat) return;
+
+      if (event.code === 'KeyC') {
+        if (addPracticeCheckpoint()) {
+          markCheckpointButtonActive();
+        }
+      } else {
+        removePracticeCheckpoint();
+      }
+    };
+
+    window.addEventListener('keydown', handlePracticeKeys, true);
+    return () => window.removeEventListener('keydown', handlePracticeKeys, true);
+  }, [screen, practiceMode]);
+
+  useEffect(() => {
     if (screen !== 'playing' || !modifications.shadow) return;
 
     const teleportToShadow = (event: KeyboardEvent) => {
@@ -1746,6 +2715,19 @@ export default function App() {
       const splitShadow = modifications.splitMode
         ? findDelayedShadowSnapshot(splitShadowHistoryRef.current, elapsedRef.current)
         : null;
+      const cameraX = (elapsedRef.current / 1000) * level.speed;
+      const from: Point = { x: cameraX + playerRef.current.x - 140, y: playerRef.current.y };
+      const splitFrom: Point | null = modifications.splitMode
+        ? { x: cameraX + splitPlayerRef.current.x - 140, y: splitPlayerRef.current.y }
+        : null;
+      teleportEffectRef.current = {
+        startedAt: performance.now(),
+        progress: 0,
+        from,
+        to: { x: shadow.worldX, y: shadow.y },
+        splitFrom,
+        splitTo: splitShadow ? { x: splitShadow.worldX, y: splitShadow.y } : null,
+      };
       elapsedRef.current = shadow.time;
       lastTimeRef.current = 0;
       playerRef.current = {
@@ -1784,14 +2766,121 @@ export default function App() {
 
   return (
     <main className={`game-shell ${screen}`}>
-      {screen !== 'result' && screen !== 'colors' && screen !== 'mods' && (
+      {screen === 'home' && (
+        <>
+          <section className={authMode ? 'home-preview home-panel-blurred' : 'home-preview'}>
+            <canvas
+              ref={homePreviewCanvasRef}
+              width={WIDTH}
+              height={HEIGHT}
+              aria-label="Случайное превью уровня"
+            />
+            <div className="home-preview-overlay">
+              <span>{previewMode.title}</span>
+            </div>
+          </section>
+
+          <section className={authMode ? 'home-auth home-panel-blurred' : 'home-auth'} aria-label="Главный экран">
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Выбери вход</h1>
+            </div>
+            <div className="home-auth-actions">
+              <button className="auth-button" onClick={() => openAuth('signup')} type="button">
+                Регистрация
+              </button>
+              <button className="auth-button" onClick={() => openAuth('signin')} type="button">
+                Вход
+              </button>
+              <button className="auth-button" onClick={continueAsGuest} type="button">
+                Играть без аккаунта
+              </button>
+            </div>
+          </section>
+        </>
+      )}
+
+      {screen === 'home' && authMode && (
+        <div
+          className={modalClosing ? 'modal-backdrop auth-modal-backdrop modal-closing' : 'modal-backdrop auth-modal-backdrop'}
+          onClick={() => closeModalWithFade(closeAuth)}
+          role="presentation"
+        >
+          <form
+            className="auth-form auth-modal"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitAuth}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>{authMode === 'signin' ? 'Вход' : 'Регистрация'}</h1>
+            </div>
+            <button className="auth-button google-auth-button" disabled={authBusy} onClick={signInWithGoogle} type="button">
+              Войти через Google
+            </button>
+            <input
+              autoFocus
+              onChange={(event) => setAuthEmail(event.target.value)}
+              placeholder="email"
+              required
+              type="email"
+              value={authEmail}
+            />
+            <input
+              minLength={6}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="пароль"
+              required
+              type="password"
+              value={authPassword}
+            />
+            <div className="auth-form-actions">
+              <button className="auth-button primary" disabled={authBusy} type="submit">
+                {authBusy ? '...' : authMode === 'signin' ? 'Войти' : 'Создать'}
+              </button>
+              <button className="auth-button" onClick={() => closeModalWithFade(closeAuth)} type="button">
+                Закрыть
+              </button>
+            </div>
+            {authMessage && <p className="auth-message">{authMessage}</p>}
+          </form>
+        </div>
+      )}
+
+      {(screen === 'playing' || screen === 'paused') && (
         <section className="stage" ref={stageRef}>
-          <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} aria-label="Dash practice level" />
+          <canvas ref={canvasRef} width={WIDTH} height={HEIGHT} aria-label="BeatShift level" />
           {screen !== 'playing' && screen !== 'paused' && <div className="scanline" />}
           {screen === 'playing' && (
             <button className="pause-button" onClick={pauseRun} type="button">
               Пауза
             </button>
+          )}
+          {screen === 'playing' && practiceMode && (
+            <div className="practice-panel" aria-label="Практика">
+              <button
+                className={checkpointButtonActive ? 'practice-tool active' : 'practice-tool'}
+                onClick={() => {
+                  if (addPracticeCheckpoint()) {
+                    markCheckpointButtonActive();
+                  }
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                title="Поставить чекпоинт"
+                type="button"
+              >
+                <span className="checkpoint-diamond" />
+              </button>
+              <button
+                className="practice-tool"
+                onClick={removePracticeCheckpoint}
+                onPointerDown={(event) => event.stopPropagation()}
+                title="Удалить последний чекпоинт"
+                type="button"
+              >
+                <span className="checkpoint-diamond disabled" />
+              </button>
+            </div>
           )}
           {screen === 'paused' && (
             <div className="pause-overlay" role="dialog" aria-label="Пауза">
@@ -1810,16 +2899,40 @@ export default function App() {
       )}
 
       {screen === 'menu' && (
-        <section className="control-panel" aria-label="Настройки тренировки">
+        <section
+          className={menuAnimationDisabled ? 'control-panel menu-panel menu-panel-static' : 'control-panel menu-panel'}
+          aria-label="Настройки тренировки"
+        >
           <div>
-            <p className="eyebrow">Dash Practice</p>
+            <p className="eyebrow">BeatShift</p>
           </div>
+          <div className="menu-account-row">
+            <span>{session ? userEmail : 'Гость'}</span>
+            {session && (
+              <button className="menu-account-button" onClick={signOut} type="button">
+                Выйти
+              </button>
+            )}
+          </div>
+          <button
+            className="menu-button controls-menu-button"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
+              setControlsPickerOpen(true);
+            }}
+            type="button"
+          >
+            Управление
+          </button>
 
           <div className="menu-action-row">
           <button
             className="option mode-trigger"
             onClick={() => {
               setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
               setModePickerOpen(true);
             }}
             type="button"
@@ -1832,6 +2945,20 @@ export default function App() {
             className="option mode-trigger"
             onClick={() => {
               setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(true);
+            }}
+            type="button"
+          >
+            <span>Сложность</span>
+            <small>{selectedDifficulty.title}</small>
+          </button>
+
+          <button
+            className="option mode-trigger"
+            onClick={() => {
+              setModePickerOpen(false);
+              setDifficultyPickerOpen(false);
               setSpeedPickerOpen(true);
             }}
             type="button"
@@ -1840,62 +2967,68 @@ export default function App() {
             <small>{selectedSpeed.title}</small>
           </button>
 
-          </div>
-
-          <div className="difficulty-row">
-            {DIFFICULTIES.map((difficulty) => (
-              <button
-                className={choice.difficulty === difficulty.id ? 'chip active' : 'chip'}
-                key={difficulty.id}
-                onClick={() => setChoice((current) => ({ ...current, difficulty: difficulty.id }))}
-                type="button"
-              >
-                {difficulty.title}
-              </button>
-            ))}
-          </div>
-
-          <div className="score-row">
-            <span>Рекорд</span>
-            <strong>{best}%</strong>
-          </div>
-
-
-          <button className="start-button" onClick={startRun} type="button">
-            Старт
-          </button>
-          <div className="secondary-action-row">
           <button
-            className="menu-button"
+            className="option mode-trigger"
             onClick={() => {
-              setModePickerOpen(false);
-              setSpeedPickerOpen(false);
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
               setScreen('colors');
             }}
             type="button"
           >
-            Цвета
+            <span>Цвета</span>
+            <small>След и модельки</small>
           </button>
-            <button
-              className="menu-button"
-              onClick={() => {
-                setModePickerOpen(false);
-                setSpeedPickerOpen(false);
-                setScreen('mods');
-              }}
-              type="button"
-            >
-              Модификации
+
+          <button
+            className="option mode-trigger"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
+              setScreen('mods');
+            }}
+            type="button"
+          >
+            <span>Модификации</span>
+            <small>Правила уровня</small>
+          </button>
+
+          </div>
+
+          <button className="start-button" onClick={startRun} type="button">
+            Старт
+          </button>
+          <button
+            className={practiceMode ? 'menu-button active' : 'menu-button'}
+            onClick={() => setPracticeMode((current) => !current)}
+            type="button"
+          >
+            Практика: {practiceMode ? 'вкл' : 'выкл'}
+          </button>
+          <div className="secondary-action-row">
+            <button className="menu-button" onClick={returnToHome} type="button">
+              Главный экран
             </button>
+          </div>
+          <div className="score-row">
+            <span>Рекорд</span>
+            <strong>{best}%</strong>
           </div>
         </section>
       )}
 
       {screen === 'menu' && modePickerOpen && (
-        <div className="modal-backdrop" onClick={() => setModePickerOpen(false)} role="presentation">
+        <div
+          className={modalClosing ? 'modal-backdrop modal-closing' : 'modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setModePickerOpen(false))}
+          role="presentation"
+        >
           <section className="mode-modal" aria-label="Выбор режима" onClick={(event) => event.stopPropagation()}>
             <div>
-              <p className="eyebrow">Dash Practice</p>
+              <p className="eyebrow">BeatShift</p>
               <h1>Режимы</h1>
             </div>
 
@@ -1906,7 +3039,7 @@ export default function App() {
                   key={mode.id}
                   onClick={() => {
                     setChoice((current) => ({ ...current, mode: mode.id }));
-                    setModePickerOpen(false);
+                    closeModalWithFade(() => setModePickerOpen(false));
                   }}
                   type="button"
                 >
@@ -1916,7 +3049,43 @@ export default function App() {
               ))}
             </div>
 
-            <button className="menu-button" onClick={() => setModePickerOpen(false)} type="button">
+            <button className="menu-button" onClick={() => closeModalWithFade(() => setModePickerOpen(false))} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'menu' && difficultyPickerOpen && (
+        <div
+          className={modalClosing ? 'modal-backdrop modal-closing' : 'modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setDifficultyPickerOpen(false))}
+          role="presentation"
+        >
+          <section className="mode-modal" aria-label="Выбор сложности" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Сложность</h1>
+            </div>
+
+            <div className="picker">
+              {DIFFICULTIES.map((difficulty) => (
+                <button
+                  className={choice.difficulty === difficulty.id ? 'option active' : 'option'}
+                  key={difficulty.id}
+                  onClick={() => {
+                    setChoice((current) => ({ ...current, difficulty: difficulty.id }));
+                    closeModalWithFade(() => setDifficultyPickerOpen(false));
+                  }}
+                  type="button"
+                >
+                  <span>{difficulty.title}</span>
+                  <small>{Math.round(difficulty.multiplier * 100)}%</small>
+                </button>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(() => setDifficultyPickerOpen(false))} type="button">
               Закрыть
             </button>
           </section>
@@ -1924,10 +3093,14 @@ export default function App() {
       )}
 
       {screen === 'menu' && speedPickerOpen && (
-        <div className="modal-backdrop" onClick={() => setSpeedPickerOpen(false)} role="presentation">
+        <div
+          className={modalClosing ? 'modal-backdrop modal-closing' : 'modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setSpeedPickerOpen(false))}
+          role="presentation"
+        >
           <section className="mode-modal" aria-label="Выбор скорости" onClick={(event) => event.stopPropagation()}>
             <div>
-              <p className="eyebrow">Dash Practice</p>
+              <p className="eyebrow">BeatShift</p>
               <h1>Скорость</h1>
             </div>
 
@@ -1938,7 +3111,7 @@ export default function App() {
                   key={speed.id}
                   onClick={() => {
                     setSpeedMode(speed.id);
-                    setSpeedPickerOpen(false);
+                    closeModalWithFade(() => setSpeedPickerOpen(false));
                   }}
                   type="button"
                 >
@@ -1948,7 +3121,53 @@ export default function App() {
               ))}
             </div>
 
-            <button className="menu-button" onClick={() => setSpeedPickerOpen(false)} type="button">
+            <button className="menu-button" onClick={() => closeModalWithFade(() => setSpeedPickerOpen(false))} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'menu' && controlsPickerOpen && (
+        <div
+          className={modalClosing ? 'modal-backdrop modal-closing' : 'modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setControlsPickerOpen(false))}
+          role="presentation"
+        >
+          <section className="mode-modal controls-modal" aria-label="Управление" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Управление</h1>
+            </div>
+
+            <div className="controls-list">
+              <div className="control-row">
+                <span>Полёт / действие</span>
+                <strong>Пробел, W/A/S/D, стрелки, мышь, касание</strong>
+              </div>
+              <div className="control-row">
+                <span>Пауза / продолжить</span>
+                <strong>Backspace</strong>
+              </div>
+              <div className="control-row">
+                <span>Рестарт после смерти</span>
+                <strong>Enter или пробел</strong>
+              </div>
+              <div className="control-row">
+                <span>Чекпоинт в практике</span>
+                <strong>C</strong>
+              </div>
+              <div className="control-row">
+                <span>Удалить чекпоинт</span>
+                <strong>D</strong>
+              </div>
+              <div className="control-row">
+                <span>Телепорт к тени</span>
+                <strong>Alt</strong>
+              </div>
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(() => setControlsPickerOpen(false))} type="button">
               Закрыть
             </button>
           </section>
@@ -1956,91 +3175,115 @@ export default function App() {
       )}
 
       {screen === 'colors' && (
-        <section className="control-panel colors-panel" aria-label="Настройки цветов">
-          <div>
-            <p className="eyebrow">Dash Practice</p>
-            <h1>Цвета</h1>
-          </div>
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel colors-panel"
+            aria-label="Настройки цветов"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Цвета</h1>
+            </div>
 
-          <div className="color-settings">
-            {COLOR_TARGETS.map((target) => (
-              <div className="color-row" key={target.id}>
-                <span>{target.title}</span>
-                <div className="color-swatches">
-                  {COLOR_PALETTE.map((color) => (
-                    <button
-                      aria-label={`${target.title}: ${color.title}`}
-                      className={colors[target.id] === color.value ? 'swatch active' : 'swatch'}
-                      key={color.value}
-                      onClick={() => updateColor(target.id, color.value)}
-                      style={{ backgroundColor: color.value }}
-                      title={color.title}
-                      type="button"
-                    />
-                  ))}
+            <div className="color-settings">
+              {COLOR_TARGETS.map((target) => (
+                <div className="color-row" key={target.id}>
+                  <span>{target.title}</span>
+                  <div className="color-swatches">
+                    {COLOR_PALETTE.map((color) => (
+                      <button
+                        aria-label={`${target.title}: ${color.title}`}
+                        className={colors[target.id] === color.value ? 'swatch active' : 'swatch'}
+                        key={color.value}
+                        onClick={() => updateColor(target.id, color.value)}
+                        style={{ backgroundColor: color.value }}
+                        title={color.title}
+                        type="button"
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
 
-          <button className="start-button" onClick={returnToMenu} type="button">
-            Меню
-          </button>
-        </section>
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
       )}
 
       {screen === 'mods' && (
-        <section className="control-panel mods-panel" aria-label="Модификации">
-          <div>
-            <p className="eyebrow">Dash Practice</p>
-            <h1>Модификации</h1>
-          </div>
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel mods-panel"
+            aria-label="Модификации"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Модификации</h1>
+            </div>
 
-          <div className="mods-list">
-            <button
-              className={modifications.upsideDown ? 'mod-option active' : 'mod-option'}
-              onClick={toggleUpsideDown}
-              type="button"
-            >
-              <span>Upside down</span>
-              <small>{modifications.upsideDown ? 'Включено' : 'Выключено'}</small>
-            </button>
-            <button
-              className={modifications.splitMode ? 'mod-option active' : 'mod-option'}
-              onClick={toggleSplitMode}
-              type="button"
-            >
-              <span>Split mode</span>
-              <small>{modifications.splitMode ? 'Включено' : 'Выключено'}</small>
-            </button>
-            <button
-              className={modifications.shadow ? 'mod-option active' : 'mod-option'}
-              onClick={toggleShadow}
-              type="button"
-            >
-              <span>Тень</span>
-              <small>{modifications.shadow ? 'Включено' : 'Выключено'}</small>
-            </button>
-            <button
-              className={modifications.showHitboxes ? 'mod-option active' : 'mod-option'}
-              onClick={toggleHitboxes}
-              type="button"
-            >
-              <span>Хитбоксы</span>
-              <small>{modifications.showHitboxes ? 'Включено' : 'Выключено'}</small>
-            </button>
-          </div>
+            <div className="mods-list">
+              <button
+                className={modifications.upsideDown ? 'mod-option active' : 'mod-option'}
+                onClick={toggleUpsideDown}
+                type="button"
+              >
+                <span>Upside down</span>
+                <small>{modifications.upsideDown ? 'Включено' : 'Выключено'}</small>
+              </button>
+              <button
+                className={modifications.splitMode ? 'mod-option active' : 'mod-option'}
+                onClick={toggleSplitMode}
+                type="button"
+              >
+                <span>Split mode</span>
+                <small>{modifications.splitMode ? 'Включено' : 'Выключено'}</small>
+              </button>
+              <button
+                className={modifications.shadow ? 'mod-option active' : 'mod-option'}
+                onClick={toggleShadow}
+                type="button"
+              >
+                <span>Тень</span>
+                <small>{modifications.shadow ? 'Включено' : 'Выключено'}</small>
+              </button>
+              <button
+                className={modifications.showHitboxes ? 'mod-option active' : 'mod-option'}
+                onClick={toggleHitboxes}
+                type="button"
+              >
+                <span>Хитбоксы</span>
+                <small>{modifications.showHitboxes ? 'Включено' : 'Выключено'}</small>
+              </button>
+            </div>
 
-          <button className="start-button" onClick={returnToMenu} type="button">
-            Меню
-          </button>
-        </section>
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
       )}
 
       {screen === 'result' && lastResult && (
         <section className="control-panel result-panel" aria-label="Результат попытки">
           <div>
-            <p className="eyebrow">Dash Practice</p>
+            <p className="eyebrow">BeatShift</p>
             <h1>{lastResult.completed ? 'Уровень пройден' : 'Попытка завершена'}</h1>
           </div>
 
