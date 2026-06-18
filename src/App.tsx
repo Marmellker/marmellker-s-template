@@ -107,6 +107,26 @@ type HomePreview = {
   colors: ColorSettings;
 };
 
+type SavedPausedRun = {
+  choice: Choice;
+  speedMode: SpeedMode;
+  practiceMode: boolean;
+  modifications: ModificationSettings;
+  elapsed: number;
+  attempt: number;
+  player: Player;
+  splitPlayer: Player;
+  trail: TrailPoint[];
+  splitTrail: TrailPoint[];
+  shadowHistory: ShadowSnapshot[];
+  splitShadowHistory: ShadowSnapshot[];
+  shadowTeleportsLeft: number;
+  shadowCooldownUntil: number;
+  checkpoints: PracticeCheckpoint[];
+  lastCheckpointAt: number;
+  nextAutoCheckpointAt: number;
+};
+
 type ModificationSettings = {
   upsideDown: boolean;
   splitMode: boolean;
@@ -196,6 +216,7 @@ const CONTROL_KEYS = new Set([
 const RECORD_KEY = 'dash-practice-records-v1';
 const COLORS_KEY = 'dash-practice-colors-v1';
 const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
+const PAUSED_RUN_KEY = 'beatshift-paused-run-v1';
 const WIDTH = 960;
 const HEIGHT = 540;
 const PLAYER_DEFAULT_X = 142;
@@ -412,6 +433,23 @@ function loadModifications(): ModificationSettings {
 
 function saveModifications(modifications: ModificationSettings) {
   window.localStorage.setItem(MODIFICATIONS_KEY, JSON.stringify(modifications));
+}
+
+function loadPausedRun(): SavedPausedRun | null {
+  try {
+    const saved = window.sessionStorage.getItem(PAUSED_RUN_KEY);
+    return saved ? (JSON.parse(saved) as SavedPausedRun) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPausedRun() {
+  try {
+    window.sessionStorage.removeItem(PAUSED_RUN_KEY);
+  } catch {
+    // В приватном режиме sessionStorage может быть недоступен.
+  }
 }
 
 function seededRandom(seed: number) {
@@ -2020,6 +2058,7 @@ export default function App() {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
+      clearPausedRun();
       if (saveProgress) {
         const saved = saveRecord(choice, completed ? 100 : progress);
         setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
@@ -2041,6 +2080,73 @@ export default function App() {
     shadowCooldownUntilRef.current = 0;
     winAnimationRef.current = null;
     teleportEffectRef.current = null;
+  };
+
+  const saveCurrentRun = () => {
+    if (screen !== 'playing' && screen !== 'paused') return;
+    if (deathAnimationRef.current || winAnimationRef.current) return;
+
+    const pausedRun: SavedPausedRun = {
+      choice,
+      speedMode,
+      practiceMode,
+      modifications,
+      elapsed: elapsedRef.current,
+      attempt: attemptRef.current,
+      player: playerRef.current,
+      splitPlayer: splitPlayerRef.current,
+      trail: trailRef.current,
+      splitTrail: splitTrailRef.current,
+      shadowHistory: shadowHistoryRef.current,
+      splitShadowHistory: splitShadowHistoryRef.current,
+      shadowTeleportsLeft: shadowTeleportsLeftRef.current,
+      shadowCooldownUntil: shadowCooldownUntilRef.current,
+      checkpoints: checkpointsRef.current,
+      lastCheckpointAt: lastCheckpointAtRef.current,
+      nextAutoCheckpointAt: nextAutoCheckpointAtRef.current,
+    };
+
+    try {
+      window.sessionStorage.setItem(PAUSED_RUN_KEY, JSON.stringify(pausedRun));
+    } catch {
+      // Если браузер запретил sessionStorage, просто продолжаем без восстановления.
+    }
+  };
+
+  const restorePausedRun = (saved: SavedPausedRun) => {
+    setChoice(saved.choice);
+    setSpeedMode(saved.speedMode);
+    setPracticeMode(saved.practiceMode);
+    setModifications({ ...DEFAULT_MODIFICATIONS, ...saved.modifications });
+    elapsedRef.current = saved.elapsed;
+    attemptRef.current = saved.attempt;
+    playerRef.current = saved.player;
+    splitPlayerRef.current = saved.splitPlayer;
+    trailRef.current = saved.trail;
+    splitTrailRef.current = saved.splitTrail;
+    shadowHistoryRef.current = saved.shadowHistory;
+    splitShadowHistoryRef.current = saved.splitShadowHistory;
+    shadowTeleportsLeftRef.current = saved.shadowTeleportsLeft;
+    shadowCooldownUntilRef.current = saved.shadowCooldownUntil;
+    checkpointsRef.current = saved.checkpoints;
+    lastCheckpointAtRef.current = saved.lastCheckpointAt;
+    nextAutoCheckpointAtRef.current = saved.nextAutoCheckpointAt;
+    shadowSnapshotRef.current = null;
+    splitShadowSnapshotRef.current = null;
+    deathAnimationRef.current = null;
+    winAnimationRef.current = null;
+    teleportEffectRef.current = null;
+    lastTimeRef.current = 0;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    practiceRespawnUntilRef.current = 0;
+    setLastResult(null);
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    setMenuAnimationDisabled(true);
+    setScreen('paused');
   };
 
   const addPracticeCheckpoint = (force = false) => {
@@ -2114,6 +2220,7 @@ export default function App() {
   };
 
   const startRun = () => {
+    clearPausedRun();
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
@@ -2153,6 +2260,7 @@ export default function App() {
     practiceRespawnUntilRef.current = 0;
     deathAnimationRef.current = null;
     winAnimationRef.current = null;
+    saveCurrentRun();
     setScreen('paused');
   };
 
@@ -2177,6 +2285,7 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setMenuAnimationDisabled(false);
+    clearPausedRun();
     setScreen('menu');
   };
 
@@ -2194,6 +2303,7 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setMenuAnimationDisabled(true);
+    clearPausedRun();
     setScreen('menu');
   };
 
@@ -2211,6 +2321,7 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     closeAuth();
+    clearPausedRun();
     setScreen('home');
   };
 
@@ -2515,14 +2626,23 @@ export default function App() {
   }, [choice, colors, finishRun, level, modifications, practiceMode, screen]);
 
   useEffect(() => {
+    const saved = loadPausedRun();
+    if (saved) {
+      restorePausedRun(saved);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!supabase) return;
 
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session) {
+      if (data.session && !loadPausedRun()) {
         void saveAccount(data.session.user);
         setMenuAnimationDisabled(false);
         setScreen('menu');
+      } else if (data.session) {
+        void saveAccount(data.session.user);
       }
     });
 
@@ -2530,11 +2650,14 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (nextSession) {
+      if (nextSession && !loadPausedRun()) {
         void saveAccount(nextSession.user);
         setAuthMode(null);
         setMenuAnimationDisabled(false);
         setScreen('menu');
+      } else if (nextSession) {
+        void saveAccount(nextSession.user);
+        setAuthMode(null);
       }
     });
 
@@ -2588,6 +2711,55 @@ export default function App() {
       window.removeEventListener('touchend', releasePointer);
     };
   }, []);
+
+  useEffect(() => {
+    if (screen !== 'playing' && screen !== 'paused') return;
+
+    const saveOnHide = () => {
+      if (document.visibilityState === 'hidden') {
+        saveCurrentRun();
+      }
+    };
+    const saveOnPageLeave = () => saveCurrentRun();
+
+    document.addEventListener('visibilitychange', saveOnHide);
+    window.addEventListener('pagehide', saveOnPageLeave);
+    window.addEventListener('beforeunload', saveOnPageLeave);
+    return () => {
+      document.removeEventListener('visibilitychange', saveOnHide);
+      window.removeEventListener('pagehide', saveOnPageLeave);
+      window.removeEventListener('beforeunload', saveOnPageLeave);
+    };
+  }, [choice, modifications, practiceMode, screen, speedMode]);
+
+  useEffect(() => {
+    if (screen !== 'paused' || !canvasRef.current) return;
+
+    drawGame(
+      canvasRef.current,
+      level,
+      choice,
+      colors,
+      modifications,
+      playerRef.current,
+      trailRef.current,
+      modifications.splitMode ? splitPlayerRef.current : null,
+      splitTrailRef.current,
+      shadowSnapshotRef.current,
+      splitShadowSnapshotRef.current,
+      shadowTeleportsLeftRef.current,
+      shadowCooldownUntilRef.current,
+      practiceMode,
+      checkpointsRef.current,
+      null,
+      null,
+      attemptRef.current,
+      elapsedRef.current,
+      false,
+      true,
+      teleportEffectRef.current,
+    );
+  }, [choice, colors, level, modifications, practiceMode, screen]);
 
   useEffect(() => {
     if (screen === 'home' && homePreviewCanvasRef.current) {
