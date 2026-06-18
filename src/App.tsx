@@ -1855,9 +1855,8 @@ function updatePlayer(
   }
 
   if (mode === 'ufo') {
-    if (ufoJumpQueued && next.cooldown <= 0) {
+    if (ufoJumpQueued) {
       next.vy = -360 * gravityDirection;
-      next.cooldown = 0.2;
     }
     next.vy += 760 * gravityDirection * dt;
     next.vy = clamp(next.vy, -430, 500);
