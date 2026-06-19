@@ -6,8 +6,36 @@ import { supabase } from './lib/supabase';
 type Mode = 'wave' | 'flipWave' | 'laser' | 'orbit' | 'ship' | 'ufo';
 type Difficulty = 'easy' | 'medium' | 'hard';
 type SpeedMode = 'normal' | 'fast' | 'superfast';
-type Screen = 'home' | 'menu' | 'playing' | 'paused' | 'result' | 'colors' | 'mods';
+type Screen =
+  | 'home'
+  | 'levelSelect'
+  | 'menu'
+  | 'playing'
+  | 'paused'
+  | 'result'
+  | 'colors'
+  | 'mods'
+  | 'records'
+  | 'infiniteRecords';
 type AuthMode = 'signin' | 'signup';
+type SoundName =
+  | 'click'
+  | 'select'
+  | 'toggle'
+  | 'start'
+  | 'pause'
+  | 'resume'
+  | 'checkpoint'
+  | 'removeCheckpoint'
+  | 'teleport'
+  | 'death'
+  | 'respawn'
+  | 'win';
+
+type ActiveMusic = {
+  master: GainNode;
+  timers: number[];
+};
 
 type Choice = {
   mode: Mode;
@@ -35,6 +63,8 @@ type Level = {
   speed: number;
   obstacles: Obstacle[];
   orbs: Orb[];
+  infinite?: boolean;
+  generatedUntil?: number;
 };
 
 type Player = {
@@ -112,6 +142,8 @@ type SavedPausedRun = {
   speedMode: SpeedMode;
   practiceMode: boolean;
   modifications: ModificationSettings;
+  infiniteMode?: boolean;
+  infiniteLevel?: Level | null;
   elapsed: number;
   attempt: number;
   player: Player;
@@ -214,6 +246,7 @@ const CONTROL_KEYS = new Set([
 ]);
 
 const RECORD_KEY = 'dash-practice-records-v1';
+const INFINITE_RECORD_KEY = 'beatshift-infinite-records-v1';
 const COLORS_KEY = 'dash-practice-colors-v1';
 const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
 const PAUSED_RUN_KEY = 'beatshift-paused-run-v1';
@@ -238,6 +271,9 @@ const TRAIL_MAX_POINTS = 360;
 const ORBIT_RADIUS_X = 42;
 const ORBIT_RADIUS_Y = 78;
 const ORBIT_SPEED = 3.35;
+const INFINITE_DURATION = 24 * 60 * 60 * 1000;
+const INFINITE_SEGMENT_LENGTH = 2_200;
+const INFINITE_GENERATE_AHEAD = 2_800;
 
 function pickDifferent<T>(items: T[], previous?: T) {
   const variants = previous === undefined ? items : items.filter((item) => item !== previous);
@@ -401,6 +437,27 @@ function saveRecord(choice: Choice, progress: number) {
   const key = recordKey(choice);
   const next = Math.max(records[key] ?? 0, Math.round(progress));
   window.localStorage.setItem(RECORD_KEY, JSON.stringify({ ...records, [key]: next }));
+  return next;
+}
+
+function infiniteRecordKey(mode: Mode) {
+  return `infinite-${mode}`;
+}
+
+function loadInfiniteRecords(): RecordMap {
+  try {
+    const saved = window.localStorage.getItem(INFINITE_RECORD_KEY);
+    return saved ? (JSON.parse(saved) as RecordMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveInfiniteRecord(mode: Mode, seconds: number) {
+  const records = loadInfiniteRecords();
+  const key = infiniteRecordKey(mode);
+  const next = Math.max(records[key] ?? 0, Math.round(seconds));
+  window.localStorage.setItem(INFINITE_RECORD_KEY, JSON.stringify({ ...records, [key]: next }));
   return next;
 }
 
@@ -972,6 +1029,150 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   }
 
   return { duration, speed, obstacles, orbs };
+}
+
+function normalizeObstacle(obstacle: Partial<Obstacle>, fallbackX: number): Obstacle {
+  const kind = obstacle.kind && ['block', 'spike', 'saw', 'spikedBlock'].includes(obstacle.kind) ? obstacle.kind : 'block';
+  const width = clamp(Number(obstacle.width) || 56, 24, 120);
+  const height = clamp(Number(obstacle.height) || 48, 24, kind === 'spike' ? 88 : HEIGHT - 68);
+  const x = Math.max(760, Number(obstacle.x) || fallbackX);
+  const y = clamp(Number(obstacle.y) || 0, 0, HEIGHT - 52);
+  const color = typeof obstacle.color === 'string' && /^#[0-9a-f]{6}$/i.test(obstacle.color) ? obstacle.color : '#243b53';
+  const direction = obstacle.direction === 'down' ? 'down' : 'up';
+
+  return { kind, direction, x, y, width, height, color };
+}
+
+function normalizeOrb(orb: Partial<Orb>, fallbackX: number): Orb {
+  return {
+    x: Math.max(760, Number(orb.x) || fallbackX),
+    y: clamp(Number(orb.y) || PLAYER_CENTER_Y, PLAYER_MIN_Y + 28, PLAYER_MAX_Y - 28),
+    radius: clamp(Number(orb.radius) || 14, 10, 18),
+  };
+}
+
+function buildFallbackInfiniteSegment(choice: Choice, _speedMode: SpeedMode, fromX: number, segmentLength = INFINITE_SEGMENT_LENGTH) {
+  const hardChoice: Choice = { mode: choice.mode, difficulty: 'hard' };
+  const random = seededRandom(choiceSeed(hardChoice) + Math.floor(fromX / 37));
+  const sectionCount = Math.max(4, Math.floor(segmentLength / 430));
+  const spacing = segmentLength / sectionCount;
+  const obstacles: Obstacle[] = [];
+  const orbs: Orb[] = [];
+
+  for (let section = 0; section < sectionCount; section += 1) {
+    const x = fromX + 240 + section * spacing;
+    const center =
+      PLAYER_CENTER_Y +
+      Math.sin((fromX + section * 431) / (choice.mode === 'laser' ? 760 : 620)) * (choice.mode === 'ship' ? 76 : 104) +
+      (random() - 0.5) * 52;
+    const gap =
+      choice.mode === 'orbit'
+        ? 192
+        : choice.mode === 'ship'
+          ? 178
+          : choice.mode === 'laser'
+            ? 126
+            : choice.mode === 'flipWave'
+              ? 162
+              : choice.mode === 'wave'
+                ? 148
+                : 184;
+    const width = choice.mode === 'laser' ? 92 : choice.mode === 'orbit' ? 58 : 66;
+    const topHeight = Math.max(54, center - gap / 2);
+    const bottomY = Math.min(HEIGHT - 78, center + gap / 2);
+    const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+    obstacles.push({ x, y: 0, width, height: topHeight, color });
+    obstacles.push({ x, y: bottomY, width, height: HEIGHT - bottomY - 52, color });
+
+    if (section % 2 === 0 || random() > 0.42) {
+      const sawSize = choice.mode === 'laser' ? 42 : 36;
+      obstacles.push({
+        kind: 'saw',
+        x: x + spacing * (0.48 + random() * 0.18),
+        y: clamp(center + (random() > 0.5 ? -84 : 54), PLAYER_MIN_Y + 18, PLAYER_MAX_Y - 52),
+        width: sawSize,
+        height: sawSize,
+        color: '#d9e2ec',
+      });
+    }
+
+    if (random() > 0.36) {
+      const spikeHeight = 34;
+      const fromTop = random() > 0.5;
+      const spikeCount = random() > 0.6 ? 3 : 2;
+      for (let index = 0; index < spikeCount; index += 1) {
+        obstacles.push({
+          kind: 'spike',
+          direction: fromTop ? 'down' : 'up',
+          x: x + 96 + index * 46,
+          y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
+          width: 40,
+          height: spikeHeight,
+          color: fromTop ? '#2f4f74' : '#8f3d58',
+        });
+      }
+    }
+
+    if (random() > 0.55) {
+      obstacles.push({
+        kind: 'spikedBlock',
+        x: x + spacing * (0.34 + random() * 0.28),
+        y: clamp(center + (random() > 0.5 ? -92 : 54), PLAYER_MIN_Y + 16, PLAYER_MAX_Y - 72),
+        width: 46,
+        height: 42,
+        color: '#6842c2',
+      });
+    }
+
+    if (choice.mode === 'ufo' && random() > 0.35) {
+      orbs.push({ x: x + spacing * 0.42, y: clamp(center, PLAYER_MIN_Y + 48, PLAYER_MAX_Y - 48), radius: 14 });
+    }
+  }
+
+  return { obstacles, orbs };
+}
+
+async function generateInfiniteSegment(choice: Choice, speedMode: SpeedMode, fromX: number) {
+  try {
+    const response = await fetch('/api/generate-level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: choice.mode,
+        difficulty: 'hard',
+        speedMode,
+        fromX,
+        segmentLength: INFINITE_SEGMENT_LENGTH,
+        seed: choiceSeed({ mode: choice.mode, difficulty: 'hard' }) + Math.floor(fromX),
+      }),
+    });
+    if (!response.ok) throw new Error(`AI level request failed: ${response.status}`);
+    const data = (await response.json()) as { obstacles?: Partial<Obstacle>[]; orbs?: Partial<Orb>[] };
+    const obstacles = Array.isArray(data.obstacles)
+      ? data.obstacles.map((obstacle, index) => normalizeObstacle(obstacle, fromX + 260 + index * 48))
+      : [];
+    const orbs = Array.isArray(data.orbs)
+      ? data.orbs.map((orb, index) => normalizeOrb(orb, fromX + 360 + index * 120))
+      : [];
+    if (obstacles.length > 0) return { obstacles, orbs };
+  } catch {
+    // Локально Vite не поднимает Vercel route, поэтому оставляем быстрый встроенный генератор.
+  }
+
+  return buildFallbackInfiniteSegment(choice, speedMode, fromX);
+}
+
+function createInfiniteLevel(choice: Choice, speedMode: SpeedMode, firstSegment: { obstacles: Obstacle[]; orbs: Orb[] }): Level {
+  const baseLevel = buildLevel({ mode: choice.mode, difficulty: 'hard' }, speedMode, false);
+  return {
+    duration: INFINITE_DURATION,
+    speed: baseLevel.speed,
+    obstacles: firstSegment.obstacles,
+    orbs: choice.mode === 'ufo' ? firstSegment.orbs : [],
+    infinite: true,
+    generatedUntil: 900 + INFINITE_SEGMENT_LENGTH,
+  };
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1595,7 +1796,8 @@ function drawGame(
 
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   const progress = clamp(elapsed / level.duration, 0, 1);
-  const cameraX = progress * level.speed * (level.duration / 1000);
+  const hudProgress = level.infinite ? (elapsed % 30_000) / 30_000 : progress;
+  const cameraX = (elapsed / 1000) * level.speed;
   const accent = getModeColor(colors, choice.mode);
 
   const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
@@ -1656,15 +1858,30 @@ function drawGame(
   level.obstacles.forEach((obstacle) => {
     const screenX = obstacle.x - cameraX + 140;
     if (screenX < -120 || screenX > WIDTH + 120) return;
+    const appearProgress = clamp((WIDTH + 120 - screenX) / 220, 0, 1);
+    const appearEase = 1 - (1 - appearProgress) ** 3;
+    const fromCeiling =
+      obstacle.kind === 'spike' ? obstacle.direction === 'down' : obstacle.y + obstacle.height / 2 < HEIGHT / 2;
+    const spawnDistance = obstacle.kind === 'saw' ? 88 : clamp(obstacle.height * 0.72, 64, 190);
+    const animatedX = screenX;
+    const animatedY = obstacle.y + (1 - appearEase) * (fromCeiling ? -spawnDistance : spawnDistance);
+    const scale = 0.92 + appearEase * 0.08;
+    ctx.save();
+    ctx.globalAlpha *= appearEase;
 
     if (obstacle.kind === 'spike') {
-      const baseY = obstacle.direction === 'down' ? obstacle.y : obstacle.y + obstacle.height;
-      const tipY = obstacle.direction === 'down' ? obstacle.y + obstacle.height : obstacle.y;
+      const baseY = obstacle.direction === 'down' ? animatedY : animatedY + obstacle.height;
+      const tipY = obstacle.direction === 'down' ? animatedY + obstacle.height : animatedY;
+      const centerX = animatedX + obstacle.width / 2;
+      const anchorY = obstacle.direction === 'down' ? animatedY : animatedY + obstacle.height;
       ctx.save();
+      ctx.translate(centerX, anchorY);
+      ctx.scale(scale, scale);
+      ctx.translate(-centerX, -anchorY);
       ctx.beginPath();
-      ctx.moveTo(screenX, baseY);
-      ctx.lineTo(screenX + obstacle.width / 2, tipY);
-      ctx.lineTo(screenX + obstacle.width, baseY);
+      ctx.moveTo(animatedX, baseY);
+      ctx.lineTo(animatedX + obstacle.width / 2, tipY);
+      ctx.lineTo(animatedX + obstacle.width, baseY);
       ctx.closePath();
       ctx.fillStyle = obstacle.color;
       ctx.shadowColor = obstacle.color;
@@ -1675,16 +1892,18 @@ function drawGame(
       ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
+      ctx.restore();
       return;
     }
 
     if (obstacle.kind === 'saw') {
-      const centerX = screenX + obstacle.width / 2;
-      const centerY = obstacle.y + obstacle.height / 2;
+      const centerX = animatedX + obstacle.width / 2;
+      const centerY = animatedY + obstacle.height / 2;
       const radius = obstacle.width / 2;
       const teeth = 14;
       ctx.save();
       ctx.translate(centerX, centerY);
+      ctx.scale(scale, scale);
       ctx.rotate(cameraX / 34);
       ctx.beginPath();
       for (let index = 0; index < teeth * 2; index += 1) {
@@ -1712,6 +1931,7 @@ function drawGame(
       ctx.arc(0, 0, radius * 0.26, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+      ctx.restore();
       return;
     }
 
@@ -1720,41 +1940,55 @@ function drawGame(
       const toothPadding = 4;
       const toothCount = Math.max(1, Math.floor((obstacle.width - toothPadding * 2) / tooth));
       const teethWidth = toothCount * tooth;
-      const teethStartX = screenX + (obstacle.width - teethWidth) / 2;
+      const teethStartX = animatedX + (obstacle.width - teethWidth) / 2;
+      const centerX = animatedX + obstacle.width / 2;
+      const centerY = animatedY + obstacle.height / 2;
       ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.scale(scale, scale);
+      ctx.translate(-centerX, -centerY);
       ctx.fillStyle = obstacle.color;
       ctx.shadowColor = obstacle.color;
       ctx.shadowBlur = 10;
-      ctx.fillRect(screenX, obstacle.y, obstacle.width, obstacle.height);
+      ctx.fillRect(animatedX, animatedY, obstacle.width, obstacle.height);
       ctx.shadowBlur = 0;
       ctx.strokeStyle = 'rgba(255,255,255,0.44)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(screenX + 1, obstacle.y + 1, obstacle.width - 2, obstacle.height - 2);
+      ctx.strokeRect(animatedX + 1, animatedY + 1, obstacle.width - 2, obstacle.height - 2);
       ctx.fillStyle = '#d9e2ec';
       for (let index = 0; index < toothCount; index += 1) {
         const px = teethStartX + index * tooth;
         ctx.beginPath();
-        ctx.moveTo(px, obstacle.y);
-        ctx.lineTo(px + tooth / 2, obstacle.y - tooth);
-        ctx.lineTo(px + tooth, obstacle.y);
+        ctx.moveTo(px, animatedY);
+        ctx.lineTo(px + tooth / 2, animatedY - tooth);
+        ctx.lineTo(px + tooth, animatedY);
         ctx.closePath();
         ctx.fill();
         ctx.beginPath();
-        ctx.moveTo(px, obstacle.y + obstacle.height);
-        ctx.lineTo(px + tooth / 2, obstacle.y + obstacle.height + tooth);
-        ctx.lineTo(px + tooth, obstacle.y + obstacle.height);
+        ctx.moveTo(px, animatedY + obstacle.height);
+        ctx.lineTo(px + tooth / 2, animatedY + obstacle.height + tooth);
+        ctx.lineTo(px + tooth, animatedY + obstacle.height);
         ctx.closePath();
         ctx.fill();
       }
       ctx.restore();
+      ctx.restore();
       return;
     }
 
+    const centerX = animatedX + obstacle.width / 2;
+    const centerY = animatedY + obstacle.height / 2;
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.scale(scale, scale);
+    ctx.translate(-centerX, -centerY);
     ctx.fillStyle = obstacle.color;
-    ctx.fillRect(screenX, obstacle.y, obstacle.width, obstacle.height);
+    ctx.fillRect(animatedX, animatedY, obstacle.width, obstacle.height);
     ctx.strokeStyle = 'rgba(255,255,255,0.38)';
     ctx.lineWidth = 2;
-    ctx.strokeRect(screenX + 1, obstacle.y + 1, obstacle.width - 2, obstacle.height - 2);
+    ctx.strokeRect(animatedX + 1, animatedY + 1, obstacle.width - 2, obstacle.height - 2);
+    ctx.restore();
+    ctx.restore();
   });
 
   level.orbs.forEach((orb) => {
@@ -1892,14 +2126,16 @@ function drawGame(
   }
 
   if (showHud) {
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.fillRect(24, 22, WIDTH - 48, 10);
-    ctx.fillStyle = accent;
-    ctx.fillRect(24, 22, (WIDTH - 48) * progress, 10);
+    if (!level.infinite) {
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.fillRect(24, 22, WIDTH - 48, 10);
+      ctx.fillStyle = accent;
+      ctx.fillRect(24, 22, (WIDTH - 48) * hudProgress, 10);
+    }
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '700 24px Inter, system-ui, sans-serif';
-    ctx.fillText(`${Math.round(progress * 100)}%`, 24, 66);
+    ctx.fillText(level.infinite ? `∞ ${Math.floor(elapsed / 1000)} с` : `${Math.round(progress * 100)}%`, 24, level.infinite ? 42 : 66);
   }
 
   if (modifications.shadow) {
@@ -1923,8 +2159,8 @@ function drawGame(
     ctx.textAlign = 'start';
   }
 
-  if (showHud && progress < 0.045 && attempt > 0) {
-    const fade = clamp((0.045 - progress) / 0.02, 0, 1);
+  if (showHud && (level.infinite ? elapsed < 2_700 : progress < 0.045) && attempt > 0) {
+    const fade = level.infinite ? clamp((2_700 - elapsed) / 1_200, 0, 1) : clamp((0.045 - progress) / 0.02, 0, 1);
     ctx.save();
     ctx.globalAlpha = Math.min(1, fade);
     ctx.fillStyle = '#ffffff';
@@ -2072,15 +2308,23 @@ export default function App() {
   const deathAnimationRef = useRef<DeathAnimation | null>(null);
   const winAnimationRef = useRef<WinAnimation | null>(null);
   const teleportEffectRef = useRef<TeleportEffect | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const activeMusicRef = useRef<ActiveMusic | null>(null);
+  const infiniteGeneratingRef = useRef(false);
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
   const [homePreview, setHomePreview] = useState<HomePreview>(() => createHomePreview());
+  const [homePreviewTransitioning, setHomePreviewTransitioning] = useState(false);
   const [speedMode, setSpeedMode] = useState<SpeedMode>('normal');
   const [practiceMode, setPracticeMode] = useState(false);
+  const [infiniteMode, setInfiniteMode] = useState(false);
+  const [infiniteLevel, setInfiniteLevel] = useState<Level | null>(null);
+  const [infiniteLoading, setInfiniteLoading] = useState(false);
   const [screen, setScreen] = useState<Screen>('home');
   const [records, setRecords] = useState<RecordMap>(() => loadRecords());
+  const [infiniteRecords, setInfiniteRecords] = useState<RecordMap>(() => loadInfiniteRecords());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
-  const [lastResult, setLastResult] = useState<{ progress: number; completed: boolean } | null>(null);
+  const [lastResult, setLastResult] = useState<{ progress: number; completed: boolean; infinite?: boolean } | null>(null);
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
   const [difficultyPickerOpen, setDifficultyPickerOpen] = useState(false);
@@ -2095,16 +2339,294 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
 
-  const level = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
+  const regularLevel = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
+  const level = infiniteMode && infiniteLevel ? infiniteLevel : regularLevel;
   const homePreviewLevel = useMemo(() => buildLevel(homePreview.choice, 'normal', false), [homePreview.choice]);
   const best = records[recordKey(choice)] ?? 0;
+  const infiniteBest = infiniteRecords[infiniteRecordKey(choice.mode)] ?? 0;
   const selectedMode = MODES.find((mode) => mode.id === choice.mode) ?? MODES[0];
   const selectedSpeed = SPEED_MODES.find((speed) => speed.id === speedMode) ?? SPEED_MODES[0];
   const selectedDifficulty = DIFFICULTIES.find((difficulty) => difficulty.id === choice.difficulty) ?? DIFFICULTIES[0];
   const previewMode = MODES.find((mode) => mode.id === homePreview.choice.mode) ?? MODES[0];
   const userEmail = session?.user.email ?? '';
 
+  const getAudioContext = useCallback(() => {
+    const AudioContextConstructor =
+      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) return null;
+
+    const context = audioContextRef.current ?? new AudioContextConstructor();
+    audioContextRef.current = context;
+    void context.resume().catch(() => undefined);
+    return context;
+  }, []);
+
+  const stopSoundtrack = useCallback(() => {
+    const activeMusic = activeMusicRef.current;
+    if (!activeMusic) return;
+
+    activeMusic.timers.forEach((timer) => window.clearInterval(timer));
+    const now = audioContextRef.current?.currentTime ?? 0;
+    activeMusic.master.gain.cancelScheduledValues(now);
+    activeMusic.master.gain.setValueAtTime(Math.max(0.0001, activeMusic.master.gain.value), now);
+    activeMusic.master.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    window.setTimeout(() => activeMusic.master.disconnect(), 240);
+    activeMusicRef.current = null;
+  }, []);
+
+  const startSoundtrack = useCallback(
+    (trackChoice: Choice, trackSpeedMode: SpeedMode) => {
+      stopSoundtrack();
+      const context = getAudioContext();
+      if (!context) return;
+
+      const bpm =
+        156 +
+        (trackChoice.difficulty === 'hard' ? 18 : trackChoice.difficulty === 'medium' ? 9 : 0) +
+        (trackSpeedMode === 'superfast' ? 14 : trackSpeedMode === 'fast' ? 7 : 0);
+      const beat = 60 / bpm;
+      const sixteenth = beat / 4;
+      const roots: Record<Mode, number> = {
+        wave: 220,
+        flipWave: 233.08,
+        laser: 185,
+        orbit: 207.65,
+        ship: 196,
+        ufo: 246.94,
+      };
+      const scales: Record<Mode, number[]> = {
+        wave: [0, 2, 3, 7, 10, 12, 14, 15],
+        flipWave: [0, 3, 5, 7, 10, 12, 15, 17],
+        laser: [0, 2, 5, 7, 10, 12, 14, 17],
+        orbit: [0, 3, 7, 10, 12, 15, 19, 22],
+        ship: [0, 2, 4, 7, 9, 12, 16, 19],
+        ufo: [0, 4, 5, 7, 11, 12, 16, 19],
+      };
+      const motifs: Record<Mode, number[]> = {
+        wave: [0, 4, 7, 11, 9, 7, 4, 2, 0, 7, 12, 11, 9, 4, 7, 2],
+        flipWave: [0, 7, 3, 10, 5, 12, 7, 14, 3, 10, 15, 12, 7, 5, 2, 0],
+        laser: [0, 5, 7, 12, 10, 7, 5, 3, 0, 7, 10, 14, 12, 10, 7, 5],
+        orbit: [0, 7, 12, 15, 12, 10, 7, 3, 0, 10, 15, 19, 15, 12, 10, 7],
+        ship: [0, 4, 7, 9, 12, 9, 7, 4, 2, 7, 9, 14, 16, 14, 9, 7],
+        ufo: [0, 4, 7, 11, 12, 11, 7, 4, 5, 7, 12, 16, 19, 16, 12, 7],
+      };
+      const root = roots[trackChoice.mode];
+      const scale = scales[trackChoice.mode];
+      const motif = motifs[trackChoice.mode];
+      const master = context.createGain();
+      const filter = context.createBiquadFilter();
+      const compressor = context.createDynamicsCompressor();
+
+      master.gain.setValueAtTime(0.0001, context.currentTime);
+      master.gain.exponentialRampToValueAtTime(trackChoice.difficulty === 'hard' ? 0.058 : 0.048, context.currentTime + 0.24);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(trackChoice.difficulty === 'hard' ? 7600 : 6400, context.currentTime);
+      master.connect(filter);
+      filter.connect(compressor);
+      compressor.connect(context.destination);
+
+      const note = (degree: number, octave = 1) => {
+        const semitone = scale[((degree % scale.length) + scale.length) % scale.length] + Math.floor(degree / scale.length) * 12;
+        return root * octave * 2 ** (semitone / 12);
+      };
+
+      const tone = (
+        frequency: number,
+        start: number,
+        duration: number,
+        type: OscillatorType,
+        volume: number,
+        endFrequency = frequency,
+      ) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = type;
+        oscillator.frequency.setValueAtTime(frequency, start);
+        oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), start + duration);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        oscillator.connect(gain);
+        gain.connect(master);
+        oscillator.start(start);
+        oscillator.stop(start + duration + 0.03);
+      };
+
+      const supersaw = (frequency: number, start: number, duration: number, volume: number) => {
+        [-0.014, -0.006, 0.004, 0.013].forEach((detune, index) => {
+          tone(frequency * (1 + detune), start + index * 0.003, duration, 'sawtooth', volume / 4);
+        });
+      };
+
+      const noise = (start: number, duration: number, volume: number) => {
+        const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let index = 0; index < data.length; index += 1) {
+          data[index] = (Math.random() * 2 - 1) * (1 - index / data.length);
+        }
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        source.buffer = buffer;
+        gain.gain.setValueAtTime(volume, start);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        source.connect(gain);
+        gain.connect(master);
+        source.start(start);
+        source.stop(start + duration);
+      };
+
+      let bar = 0;
+      const scheduleBar = () => {
+        const startAt = context.currentTime + 0.05;
+        const bassDegree = motif[(bar * 5) % motif.length] % 7;
+        const tranceBar = bar % 2 === 1;
+        const bassSteps =
+          trackChoice.difficulty === 'hard'
+            ? [0, 1, 3, 4, 6, 8, 9, 11, 12, 14]
+            : trackChoice.difficulty === 'medium'
+              ? [0, 2, 3, 6, 8, 10, 11, 14]
+              : [0, 3, 6, 8, 10, 13];
+
+        for (let beatIndex = 0; beatIndex < 4; beatIndex += 1) {
+          const beatAt = startAt + beatIndex * beat;
+          tone(72, beatAt, 0.075, 'sine', 0.72, 36);
+          if (beatIndex === 1 || beatIndex === 3) {
+            noise(beatAt, 0.065, 0.18);
+            tone(180, beatAt, 0.07, 'triangle', 0.14, 85);
+          }
+        }
+
+        for (let step = 0; step < 16; step += 1) {
+          const stepAt = startAt + step * sixteenth;
+          if (step % 2 === 1 || (tranceBar && step % 4 === 0)) {
+            noise(stepAt, 0.018, tranceBar ? 0.095 : 0.07);
+          }
+          if (bassSteps.includes(step)) {
+            const degree = bassDegree + (tranceBar && step % 8 === 6 ? 1 : 0);
+            tone(note(degree, 0.5), stepAt, sixteenth * 0.78, 'sawtooth', 0.25);
+            tone(note(bassDegree, 0.25), stepAt, sixteenth * 0.42, 'square', 0.1, note(bassDegree, step % 4 === 3 ? 0.72 : 0.5));
+          }
+        }
+
+        for (let step = 0; step < 16; step += tranceBar ? 2 : 4) {
+          const stepAt = startAt + step * sixteenth;
+          const degree = motif[(step + bar * 3) % motif.length];
+          if (tranceBar) {
+            tone(note(degree, 2), stepAt, sixteenth * 0.82, 'square', step % 8 === 0 ? 0.14 : 0.09);
+            if (step % 4 === 2) supersaw(note(degree + 5, 2), stepAt, sixteenth * 0.55, 0.075);
+          } else {
+            supersaw(note(degree, 2), stepAt, sixteenth * 1.7, step % 8 === 0 ? 0.12 : 0.085);
+          }
+        }
+
+        if (bar % 4 === 3) {
+          noise(startAt + beat * 3.5, beat * 0.28, 0.16);
+          supersaw(note(motif[(bar * 7) % motif.length] + 8, 2), startAt + beat * 3, beat * 0.5, 0.14);
+        }
+
+        bar += 1;
+      };
+
+      scheduleBar();
+      const timer = window.setInterval(scheduleBar, beat * 4 * 1000);
+      activeMusicRef.current = { master, timers: [timer] };
+    },
+    [getAudioContext, stopSoundtrack],
+  );
+
+  const playSound = useCallback((sound: SoundName) => {
+    const context = getAudioContext();
+    if (!context) return;
+
+    const now = context.currentTime;
+    const master = context.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.16, now + 0.012);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + (sound === 'win' ? 0.74 : 0.34));
+    master.connect(context.destination);
+
+    const playTone = (
+      frequency: number,
+      start: number,
+      duration: number,
+      type: OscillatorType = 'sine',
+      volume = 1,
+      endFrequency = frequency,
+    ) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, now + start);
+      oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), now + start + duration);
+      gain.gain.setValueAtTime(0.0001, now + start);
+      gain.gain.exponentialRampToValueAtTime(volume, now + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+      oscillator.connect(gain);
+      gain.connect(master);
+      oscillator.start(now + start);
+      oscillator.stop(now + start + duration + 0.02);
+    };
+
+    const playNoise = (start: number, duration: number, volume = 0.8) => {
+      const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let index = 0; index < data.length; index += 1) {
+        data[index] = (Math.random() * 2 - 1) * (1 - index / data.length);
+      }
+      const source = context.createBufferSource();
+      const gain = context.createGain();
+      source.buffer = buffer;
+      gain.gain.setValueAtTime(volume, now + start);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+      source.connect(gain);
+      gain.connect(master);
+      source.start(now + start);
+      source.stop(now + start + duration);
+    };
+
+    if (sound === 'click') playTone(520, 0, 0.06, 'triangle', 0.5, 680);
+    if (sound === 'select') {
+      playTone(460, 0, 0.07, 'triangle', 0.45, 620);
+      playTone(760, 0.055, 0.08, 'sine', 0.38, 920);
+    }
+    if (sound === 'toggle') playTone(380, 0, 0.11, 'square', 0.35, 760);
+    if (sound === 'start') {
+      playTone(330, 0, 0.08, 'triangle', 0.5, 440);
+      playTone(660, 0.075, 0.12, 'sine', 0.42, 990);
+    }
+    if (sound === 'pause') playTone(520, 0, 0.12, 'sine', 0.45, 260);
+    if (sound === 'resume') playTone(280, 0, 0.11, 'triangle', 0.45, 620);
+    if (sound === 'checkpoint') {
+      playTone(640, 0, 0.08, 'triangle', 0.45, 840);
+      playTone(980, 0.07, 0.1, 'sine', 0.35, 1180);
+    }
+    if (sound === 'removeCheckpoint') playTone(440, 0, 0.12, 'sawtooth', 0.35, 220);
+    if (sound === 'teleport') {
+      playTone(880, 0, 0.16, 'sawtooth', 0.34, 220);
+      playTone(1320, 0.025, 0.12, 'triangle', 0.26, 420);
+      playNoise(0.02, 0.1, 0.24);
+    }
+    if (sound === 'death') {
+      playTone(220, 0, 0.22, 'sawtooth', 0.48, 70);
+      playNoise(0.03, 0.18, 0.32);
+    }
+    if (sound === 'respawn') {
+      playTone(260, 0, 0.08, 'triangle', 0.38, 420);
+      playTone(520, 0.08, 0.1, 'sine', 0.34, 760);
+    }
+    if (sound === 'win') {
+      playTone(523, 0, 0.11, 'square', 0.34, 523);
+      playTone(659, 0.08, 0.11, 'square', 0.32, 659);
+      playTone(784, 0.16, 0.13, 'square', 0.32, 784);
+      playTone(1047, 0.27, 0.18, 'triangle', 0.36, 1319);
+      playTone(1568, 0.42, 0.2, 'sine', 0.22, 2093);
+      playNoise(0.03, 0.06, 0.12);
+      playNoise(0.28, 0.08, 0.1);
+    }
+  }, []);
+
   const openAuth = (mode: AuthMode) => {
+    playSound('click');
     setModalClosing(false);
     setAuthMode(mode);
     setAuthMessage('');
@@ -2118,6 +2640,7 @@ export default function App() {
 
   const closeModalWithFade = (close: () => void) => {
     if (modalClosing) return;
+    playSound('click');
     setModalClosing(true);
     window.setTimeout(() => {
       close();
@@ -2126,9 +2649,10 @@ export default function App() {
   };
 
   const continueAsGuest = () => {
+    playSound('start');
     closeAuth();
     setMenuAnimationDisabled(false);
-    setScreen('menu');
+    setScreen('levelSelect');
   };
 
   const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
@@ -2156,7 +2680,7 @@ export default function App() {
       setAuthMessage(authMode === 'signup' ? 'Аккаунт создан. Если Supabase попросит подтверждение, проверь почту.' : '');
       closeAuth();
       setMenuAnimationDisabled(false);
-      setScreen('menu');
+      setScreen('levelSelect');
     }
     setAuthBusy(false);
   };
@@ -2183,6 +2707,7 @@ export default function App() {
   };
 
   const signOut = async () => {
+    playSound('click');
     if (supabase) {
       await supabase.auth.signOut();
     }
@@ -2197,14 +2722,22 @@ export default function App() {
         cancelAnimationFrame(animationRef.current);
       }
       clearPausedRun();
-      if (saveProgress) {
+      if (saveProgress && infiniteMode) {
+        const saved = saveInfiniteRecord(choice.mode, progress);
+        setInfiniteRecords((current) => ({ ...current, [infiniteRecordKey(choice.mode)]: saved }));
+      } else if (saveProgress) {
         const saved = saveRecord(choice, completed ? 100 : progress);
         setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
       }
-      setLastResult({ progress: Math.round(completed ? 100 : progress), completed });
+      setLastResult({
+        progress: Math.round(infiniteMode ? progress : completed ? 100 : progress),
+        completed,
+        infinite: infiniteMode,
+      });
+      setInfiniteMode(false);
       setScreen('result');
     },
-    [choice],
+    [choice, infiniteMode],
   );
 
   const resetRunState = () => {
@@ -2229,6 +2762,8 @@ export default function App() {
       speedMode,
       practiceMode,
       modifications,
+      infiniteMode,
+      infiniteLevel,
       elapsed: elapsedRef.current,
       attempt: attemptRef.current,
       player: playerRef.current,
@@ -2256,6 +2791,8 @@ export default function App() {
     setSpeedMode(saved.speedMode);
     setPracticeMode(saved.practiceMode);
     setModifications({ ...DEFAULT_MODIFICATIONS, ...saved.modifications });
+    setInfiniteMode(Boolean(saved.infiniteMode && saved.infiniteLevel));
+    setInfiniteLevel(saved.infiniteLevel ?? null);
     elapsedRef.current = saved.elapsed;
     attemptRef.current = saved.attempt;
     playerRef.current = saved.player;
@@ -2304,12 +2841,15 @@ export default function App() {
       },
     ];
     lastCheckpointAtRef.current = elapsedRef.current;
+    playSound('checkpoint');
     return true;
   };
 
   const removePracticeCheckpoint = () => {
     if (!practiceMode || screen !== 'playing') return;
+    if (checkpointsRef.current.length === 0) return;
     checkpointsRef.current = checkpointsRef.current.slice(0, -1);
+    playSound('removeCheckpoint');
   };
 
   const markCheckpointButtonActive = () => {
@@ -2359,10 +2899,14 @@ export default function App() {
 
     lastTimeRef.current = 0;
     practiceRespawnUntilRef.current = performance.now() + PRACTICE_RESPAWN_DELAY_MS;
+    playSound('respawn');
   };
 
   const startRun = () => {
+    playSound('start');
     clearPausedRun();
+    setInfiniteMode(false);
+    setInfiniteLevel(null);
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
@@ -2377,7 +2921,7 @@ export default function App() {
     lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
     nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     practiceRespawnUntilRef.current = 0;
-    const playerStartX = getPlayerStartX(modifications.shadow, level.speed);
+    const playerStartX = getPlayerStartX(modifications.shadow, regularLevel.speed);
     playerRef.current = {
       x: playerStartX,
       y: modifications.splitMode ? PLAYER_CENTER_Y - SPLIT_PLAYER_OFFSET : PLAYER_CENTER_Y,
@@ -2396,7 +2940,57 @@ export default function App() {
     setScreen('playing');
   };
 
+  const startInfiniteRun = async () => {
+    if (infiniteLoading) return;
+    playSound('start');
+    setInfiniteLoading(true);
+    const infiniteChoice: Choice = { mode: choice.mode, difficulty: 'hard' };
+    const infiniteSpeedMode: SpeedMode = 'normal';
+    const firstSegment = await generateInfiniteSegment(infiniteChoice, infiniteSpeedMode, 900);
+    const nextLevel = createInfiniteLevel(infiniteChoice, infiniteSpeedMode, firstSegment);
+    clearPausedRun();
+    setChoice(infiniteChoice);
+    setSpeedMode(infiniteSpeedMode);
+    setPracticeMode(false);
+    setInfiniteLevel(nextLevel);
+    setInfiniteMode(true);
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    attemptRef.current += 1;
+    elapsedRef.current = 0;
+    lastTimeRef.current = 0;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    resetRunState();
+    checkpointsRef.current = [];
+    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
+    practiceRespawnUntilRef.current = 0;
+    infiniteGeneratingRef.current = false;
+    const playerStartX = getPlayerStartX(modifications.shadow, nextLevel.speed);
+    playerRef.current = {
+      x: playerStartX,
+      y: modifications.splitMode ? PLAYER_CENTER_Y - SPLIT_PLAYER_OFFSET : PLAYER_CENTER_Y,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
+    splitPlayerRef.current = {
+      x: playerStartX,
+      y: PLAYER_CENTER_Y + SPLIT_PLAYER_OFFSET,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
+    setLastResult(null);
+    setInfiniteLoading(false);
+    setScreen('playing');
+  };
+
   const pauseRun = () => {
+    playSound('pause');
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
     practiceRespawnUntilRef.current = 0;
@@ -2407,6 +3001,7 @@ export default function App() {
   };
 
   const resumeRun = () => {
+    playSound('resume');
     lastTimeRef.current = 0;
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
@@ -2414,6 +3009,7 @@ export default function App() {
   };
 
   const returnToMenu = () => {
+    playSound('click');
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
     }
@@ -2427,6 +3023,8 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setMenuAnimationDisabled(false);
+    setInfiniteMode(false);
+    setInfiniteLevel(null);
     clearPausedRun();
     setScreen('menu');
   };
@@ -2445,11 +3043,14 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setMenuAnimationDisabled(true);
+    setInfiniteMode(false);
+    setInfiniteLevel(null);
     clearPausedRun();
     setScreen('menu');
   };
 
   const returnToHome = () => {
+    playSound('click');
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
     }
@@ -2463,11 +3064,20 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     closeAuth();
+    setInfiniteMode(false);
+    setInfiniteLevel(null);
     clearPausedRun();
     setScreen('home');
   };
 
+  const openCustomLevels = () => {
+    playSound('start');
+    setMenuAnimationDisabled(false);
+    setScreen('menu');
+  };
+
   const updateColor = (target: keyof ColorSettings, value: string) => {
+    playSound('select');
     setColors((current) => {
       const next = { ...current, [target]: value };
       saveColors(next);
@@ -2476,6 +3086,7 @@ export default function App() {
   };
 
   const toggleUpsideDown = () => {
+    playSound('toggle');
     setModifications((current) => {
       const next = { ...current, upsideDown: !current.upsideDown };
       saveModifications(next);
@@ -2484,6 +3095,7 @@ export default function App() {
   };
 
   const toggleSplitMode = () => {
+    playSound('toggle');
     setModifications((current) => {
       const next = { ...current, splitMode: !current.splitMode };
       saveModifications(next);
@@ -2492,6 +3104,7 @@ export default function App() {
   };
 
   const toggleShadow = () => {
+    playSound('toggle');
     setModifications((current) => {
       const next = { ...current, shadow: !current.shadow };
       saveModifications(next);
@@ -2500,12 +3113,23 @@ export default function App() {
   };
 
   const toggleHitboxes = () => {
+    playSound('toggle');
     setModifications((current) => {
       const next = { ...current, showHitboxes: !current.showHitboxes };
       saveModifications(next);
       return next;
     });
   };
+
+  useEffect(() => {
+    if (screen !== 'playing') {
+      stopSoundtrack();
+      return;
+    }
+
+    startSoundtrack(choice, speedMode);
+    return () => stopSoundtrack();
+  }, [choice, screen, speedMode, startSoundtrack, stopSoundtrack]);
 
   useEffect(() => {
     if (screen !== 'playing') return;
@@ -2638,6 +3262,37 @@ export default function App() {
       elapsedRef.current += dt * 1000;
 
       const cameraX = (elapsedRef.current / 1000) * level.speed;
+      if (
+        level.infinite &&
+        typeof level.generatedUntil === 'number' &&
+        cameraX + INFINITE_GENERATE_AHEAD > level.generatedUntil &&
+        !infiniteGeneratingRef.current
+      ) {
+        const fromX = level.generatedUntil;
+        infiniteGeneratingRef.current = true;
+        void generateInfiniteSegment({ mode: choice.mode, difficulty: 'hard' }, speedMode, fromX)
+          .then((segment) => {
+            setInfiniteLevel((current) => {
+              if (!current || !current.infinite || (current.generatedUntil ?? 0) > fromX) return current;
+              const keepFrom = Math.max(0, cameraX - 1_200);
+              return {
+                ...current,
+                generatedUntil: fromX + INFINITE_SEGMENT_LENGTH,
+                obstacles: [
+                  ...current.obstacles.filter((obstacle) => obstacle.x + obstacle.width >= keepFrom),
+                  ...segment.obstacles,
+                ],
+                orbs: [
+                  ...current.orbs.filter((orb) => orb.x + orb.radius >= keepFrom),
+                  ...(choice.mode === 'ufo' ? segment.orbs : []),
+                ],
+              };
+            });
+          })
+          .finally(() => {
+            infiniteGeneratingRef.current = false;
+          });
+      }
       const player = updatePlayer(
         playerRef.current,
         choice.mode,
@@ -2732,12 +3387,13 @@ export default function App() {
       );
 
       if (hit) {
+        playSound('death');
         deathAnimationRef.current = {
           startedAt: time,
           progress: 0,
           player,
           splitPlayer,
-          levelProgress: (elapsedRef.current / level.duration) * 100,
+          levelProgress: level.infinite ? elapsedRef.current / 1000 : (elapsedRef.current / level.duration) * 100,
         };
         inputRef.current = false;
         ufoJumpQueuedRef.current = false;
@@ -2745,7 +3401,8 @@ export default function App() {
         return;
       }
 
-      if (elapsedRef.current >= level.duration) {
+      if (!level.infinite && elapsedRef.current >= level.duration) {
+        playSound('win');
         winAnimationRef.current = {
           startedAt: time,
           progress: 0,
@@ -2765,7 +3422,7 @@ export default function App() {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [choice, colors, finishRun, level, modifications, practiceMode, screen]);
+  }, [choice, colors, finishRun, level, modifications, playSound, practiceMode, screen]);
 
   useEffect(() => {
     const saved = loadPausedRun();
@@ -2782,7 +3439,7 @@ export default function App() {
       if (data.session && !loadPausedRun()) {
         void saveAccount(data.session.user);
         setMenuAnimationDisabled(false);
-        setScreen('menu');
+        setScreen('levelSelect');
       } else if (data.session) {
         void saveAccount(data.session.user);
       }
@@ -2796,7 +3453,7 @@ export default function App() {
         void saveAccount(nextSession.user);
         setAuthMode(null);
         setMenuAnimationDisabled(false);
-        setScreen('menu');
+        setScreen('levelSelect');
       } else if (nextSession) {
         void saveAccount(nextSession.user);
         setAuthMode(null);
@@ -2946,8 +3603,21 @@ export default function App() {
 
   useEffect(() => {
     if (screen !== 'home') return;
-    const interval = window.setInterval(() => setHomePreview((previous) => createHomePreview(previous)), 4200);
-    return () => window.clearInterval(interval);
+    const timers: number[] = [];
+    const interval = window.setInterval(() => {
+      setHomePreviewTransitioning(true);
+      timers.push(
+        window.setTimeout(() => {
+          setHomePreview((previous) => createHomePreview(previous));
+          timers.push(window.setTimeout(() => setHomePreviewTransitioning(false), 90));
+        }, 360),
+      );
+    }, 5200);
+    return () => {
+      window.clearInterval(interval);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      setHomePreviewTransitioning(false);
+    };
   }, [screen]);
 
   useEffect(() => {
@@ -3085,17 +3755,26 @@ export default function App() {
       shadowCooldownUntilRef.current = elapsedRef.current + 10_000;
       shadowSnapshotRef.current = null;
       splitShadowSnapshotRef.current = null;
+      playSound('teleport');
     };
 
     window.addEventListener('keydown', teleportToShadow);
     return () => window.removeEventListener('keydown', teleportToShadow);
-  }, [screen, modifications.shadow, modifications.splitMode]);
+  }, [screen, modifications.shadow, modifications.splitMode, level.speed, playSound]);
 
   return (
     <main className={`game-shell ${screen}`}>
       {screen === 'home' && (
         <>
-          <section className={authMode ? 'home-preview home-panel-blurred' : 'home-preview'}>
+          <section
+            className={[
+              'home-preview',
+              homePreviewTransitioning ? 'home-preview-switching' : '',
+              authMode ? 'home-panel-blurred' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
             <canvas
               ref={homePreviewCanvasRef}
               width={WIDTH}
@@ -3172,6 +3851,30 @@ export default function App() {
             {authMessage && <p className="auth-message">{authMessage}</p>}
           </form>
         </div>
+      )}
+
+      {screen === 'levelSelect' && (
+        <section className="control-panel level-select-panel" aria-label="Выбор типа уровней">
+          <div>
+            <p className="eyebrow">BeatShift</p>
+            <h1>Уровни</h1>
+          </div>
+
+          <div className="level-select-actions">
+            <button className="level-select-button" disabled type="button">
+              <span>Туториал</span>
+              <small>Скоро</small>
+            </button>
+            <button className="level-select-button active" onClick={openCustomLevels} type="button">
+              <span>Кастом</span>
+              <small>Выбери режим и параметры уровня под себя</small>
+            </button>
+          </div>
+
+          <button className="menu-button" onClick={returnToHome} type="button">
+            Главный экран
+          </button>
+        </section>
       )}
 
       {(screen === 'playing' || screen === 'paused') && (
@@ -3323,26 +4026,56 @@ export default function App() {
             <small>Правила уровня</small>
           </button>
 
-          </div>
-
-          <button className="start-button" onClick={startRun} type="button">
-            Старт
-          </button>
           <button
-            className={practiceMode ? 'menu-button active' : 'menu-button'}
+            className="option mode-trigger"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
+              setControlsPickerOpen(false);
+              setScreen('records');
+            }}
+            type="button"
+          >
+            <span>Рекорды</span>
+            <small>Обычные уровни</small>
+          </button>
+
+          <button
+            className="option mode-trigger"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
+              setControlsPickerOpen(false);
+              setScreen('infiniteRecords');
+            }}
+            type="button"
+          >
+            <span>Бесконечные рекорды</span>
+            <small>Время в секундах</small>
+          </button>
+
+          <button
+            className={practiceMode ? 'menu-button practice-menu-button active' : 'menu-button practice-menu-button'}
             onClick={() => setPracticeMode((current) => !current)}
             type="button"
           >
             Практика: {practiceMode ? 'вкл' : 'выкл'}
           </button>
+
+          </div>
+
+          <button className="start-button" onClick={startRun} type="button">
+            Старт
+          </button>
+          <button className="infinite-button" disabled={infiniteLoading} onClick={startInfiniteRun} type="button">
+            {infiniteLoading ? 'Генерация...' : 'Бесконечный уровень'}
+          </button>
           <div className="secondary-action-row">
             <button className="menu-button" onClick={returnToHome} type="button">
               Главный экран
             </button>
-          </div>
-          <div className="score-row">
-            <span>Рекорд</span>
-            <strong>{best}%</strong>
           </div>
         </section>
       )}
@@ -3611,6 +4344,90 @@ export default function App() {
         </div>
       )}
 
+      {screen === 'infiniteRecords' && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel infinite-records-panel"
+            aria-label="Рекорды бесконечного уровня"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Рекорды</h1>
+            </div>
+
+            <div className="infinite-records-list">
+              {MODES.map((mode) => {
+                const seconds = infiniteRecords[infiniteRecordKey(mode.id)] ?? 0;
+                return (
+                  <div className={choice.mode === mode.id ? 'infinite-record-row active' : 'infinite-record-row'} key={mode.id}>
+                    <span>{mode.title}</span>
+                    <strong>{seconds > 0 ? `${seconds} с` : '0 с'}</strong>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'records' && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel records-panel"
+            aria-label="Рекорды обычных уровней"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Рекорды</h1>
+            </div>
+
+            <div className="records-table">
+              {DIFFICULTIES.map((difficulty) => (
+                <section className="records-row" key={difficulty.id}>
+                  <div className="records-difficulty">
+                    <span>{difficulty.title}</span>
+                  </div>
+                  <div className="records-mode-grid">
+                    {MODES.map((mode) => {
+                      const percent = records[recordKey({ mode: mode.id, difficulty: difficulty.id })] ?? 0;
+                      const isCurrent = choice.mode === mode.id && choice.difficulty === difficulty.id;
+                      return (
+                        <div className={isCurrent ? 'records-mode-cell active' : 'records-mode-cell'} key={mode.id}>
+                          <span>{mode.title}</span>
+                          <strong>{percent}%</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
       {screen === 'result' && lastResult && (
         <section className="control-panel result-panel" aria-label="Результат попытки">
           <div>
@@ -3619,17 +4436,17 @@ export default function App() {
           </div>
 
           <div className={lastResult.completed ? 'result win' : 'result'}>
-            <span>Результат</span>
-            <strong>{lastResult.progress}%</strong>
+            <span>{lastResult.infinite ? 'Время' : 'Результат'}</span>
+            <strong>{lastResult.infinite ? `${lastResult.progress} с` : `${lastResult.progress}%`}</strong>
           </div>
 
           <div className="score-row">
             <span>Рекорд</span>
-            <strong>{best}%</strong>
+            <strong>{lastResult.infinite ? `${infiniteBest} с` : `${best}%`}</strong>
           </div>
 
           <div className="result-actions">
-            <button className="start-button" onClick={startRun} type="button">
+            <button className="start-button" onClick={lastResult.infinite ? startInfiniteRun : startRun} type="button">
               Рестарт
             </button>
             <button className="menu-button" onClick={returnToMenu} type="button">

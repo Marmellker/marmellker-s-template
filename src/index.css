@@ -64,6 +64,14 @@ button {
   justify-content: center;
 }
 
+.game-shell.levelSelect {
+  grid-template-columns: minmax(300px, 560px);
+  justify-content: center;
+  align-content: center;
+  min-height: 100dvh;
+  padding: 24px;
+}
+
 .game-shell.menu {
   grid-template-columns: minmax(320px, 1120px);
   justify-content: center;
@@ -73,7 +81,9 @@ button {
 }
 
 .game-shell.colors,
-.game-shell.mods {
+.game-shell.mods,
+.game-shell.records,
+.game-shell.infiniteRecords {
   grid-template-columns: minmax(300px, 560px);
   justify-content: center;
 }
@@ -131,6 +141,17 @@ canvas {
   min-height: min(640px, calc(100dvh - 48px));
   aspect-ratio: auto;
   object-fit: cover;
+  transition:
+    opacity 420ms ease,
+    filter 420ms ease,
+    transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, filter, transform;
+}
+
+.home-preview-switching canvas {
+  opacity: 0.24;
+  filter: blur(5px);
+  transform: translateX(-16px) scale(1.018);
 }
 
 .home-preview-overlay {
@@ -143,6 +164,14 @@ canvas {
   border-radius: 8px;
   background: rgba(8, 11, 18, 0.58);
   backdrop-filter: blur(12px);
+  transition:
+    opacity 340ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.home-preview-switching .home-preview-overlay {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
 .home-preview-overlay span {
@@ -373,6 +402,64 @@ canvas {
   backdrop-filter: blur(18px);
 }
 
+.level-select-panel {
+  width: min(560px, calc(100vw - 48px));
+  margin-inline: auto;
+  text-align: center;
+  animation: resultPanelIn 320ms ease both;
+}
+
+.level-select-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.level-select-button {
+  min-height: 112px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.level-select-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.level-select-button.active {
+  border-color: rgba(125, 249, 194, 0.52);
+  background: linear-gradient(135deg, rgba(125, 249, 194, 0.2), rgba(250, 204, 21, 0.13));
+}
+
+.level-select-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.level-select-button span {
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.level-select-button small {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .menu-panel {
   width: min(1120px, calc(100vw - 64px));
   display: grid;
@@ -393,6 +480,7 @@ canvas {
 .menu-panel > div:first-child,
 .difficulty-row,
 .menu-panel > .start-button,
+.menu-panel > .infinite-button,
 .menu-action-row {
   grid-column: 1 / -1;
 }
@@ -411,7 +499,7 @@ canvas {
 }
 
 .secondary-action-row {
-  grid-column: 2 / 5;
+  grid-column: 1 / -1;
 }
 
 .menu-panel > .score-row {
@@ -644,6 +732,7 @@ h1 {
 .option,
 .chip,
 .start-button,
+.infinite-button,
 .menu-button {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -683,6 +772,14 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
+.menu-action-row .practice-menu-button {
+  grid-column: 5;
+  min-height: 76px;
+  padding: 14px 12px;
+  background: rgba(13, 18, 31, 0.72);
+  backdrop-filter: blur(12px);
+}
+
 .menu-action-row .mode-trigger span {
   font-size: 15px;
 }
@@ -706,6 +803,7 @@ h1 {
 .option:hover,
 .chip:hover,
 .start-button:hover,
+.infinite-button:hover,
 .menu-button:hover,
 .menu-account-button:hover {
   transform: translateY(-1px);
@@ -741,7 +839,9 @@ h1 {
 .modal-backdrop.modal-closing .mode-modal,
 .modal-backdrop.modal-closing .auth-modal,
 .modal-backdrop.modal-closing .colors-panel,
-.modal-backdrop.modal-closing .mods-panel {
+.modal-backdrop.modal-closing .mods-panel,
+.modal-backdrop.modal-closing .records-panel,
+.modal-backdrop.modal-closing .infinite-records-panel {
   animation: modalPopOut 180ms ease both;
 }
 
@@ -967,6 +1067,23 @@ h1 {
   font-weight: 900;
 }
 
+.infinite-button {
+  min-height: 60px;
+  padding: 13px 18px;
+  border-color: rgba(125, 249, 194, 0.28);
+  background: linear-gradient(135deg, #7df9c2, #facc15);
+  color: #07101d;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.infinite-button:disabled {
+  cursor: wait;
+  opacity: 0.76;
+  transform: none;
+}
+
 .result-panel {
   text-align: center;
   animation: resultPanelIn 320ms ease both;
@@ -1020,6 +1137,116 @@ h1 {
 .mods-panel {
   width: min(560px, calc(100vw - 48px));
   animation: modalPopIn 220ms ease both;
+}
+
+.infinite-records-panel {
+  width: min(560px, calc(100vw - 48px));
+  animation: modalPopIn 220ms ease both;
+}
+
+.records-panel {
+  width: min(860px, calc(100vw - 48px));
+  animation: modalPopIn 220ms ease both;
+}
+
+.records-table {
+  display: grid;
+  gap: 12px;
+}
+
+.records-row {
+  display: grid;
+  grid-template-columns: 116px 1fr;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.records-difficulty,
+.records-mode-cell {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+}
+
+.records-difficulty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 12px;
+}
+
+.records-difficulty span {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.records-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(82px, 1fr));
+  gap: 10px;
+}
+
+.records-mode-cell {
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 10px;
+}
+
+.records-mode-cell.active {
+  border-color: rgba(57, 208, 255, 0.58);
+  background: rgba(57, 208, 255, 0.12);
+}
+
+.records-mode-cell span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.records-mode-cell strong {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.infinite-records-list {
+  display: grid;
+  gap: 10px;
+}
+
+.infinite-record-row {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+}
+
+.infinite-record-row.active {
+  border-color: rgba(125, 249, 194, 0.52);
+  background: rgba(125, 249, 194, 0.12);
+}
+
+.infinite-record-row span {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.infinite-record-row strong {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 900;
 }
 
 .mods-list {
@@ -1124,6 +1351,10 @@ h1 {
   min-height: 62px;
 }
 
+.menu-panel > .infinite-button {
+  min-height: 62px;
+}
+
 .menu-button:hover {
   transform: translateY(-1px);
 }
@@ -1175,6 +1406,7 @@ h1 {
 
   .menu-account-row,
   .menu-panel > .start-button,
+  .menu-panel > .infinite-button,
   .menu-panel > .menu-button {
     grid-column: 1;
   }
@@ -1184,11 +1416,28 @@ h1 {
   }
 
   .secondary-action-row {
-    grid-column: 2;
+    grid-column: 1 / -1;
+  }
+
+  .menu-action-row .practice-menu-button {
+    grid-column: auto;
   }
 
   .menu-panel > .score-row {
     grid-column: 3;
+  }
+
+  .records-row {
+    grid-template-columns: 1fr;
+  }
+
+  .records-difficulty {
+    min-height: 48px;
+    justify-items: start;
+  }
+
+  .records-mode-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -1206,6 +1455,10 @@ h1 {
     padding: 16px;
   }
 
+  .level-select-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .menu-panel,
   .menu-action-row,
   .secondary-action-row {
@@ -1219,16 +1472,26 @@ h1 {
 
   .menu-account-row,
   .menu-panel > .start-button,
+  .menu-panel > .infinite-button,
   .menu-panel > .menu-button,
   .menu-panel > .controls-menu-button,
   .menu-panel > .score-row,
-  .secondary-action-row {
+  .secondary-action-row,
+  .menu-action-row .practice-menu-button {
     grid-column: 1;
   }
 
   .control-row {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .records-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .records-mode-cell span {
+    white-space: normal;
   }
 
   h1 {
@@ -1249,7 +1512,9 @@ h1 {
 }
 
 .game-shell.colors,
-.game-shell.mods {
+.game-shell.mods,
+.game-shell.records,
+.game-shell.infiniteRecords {
   min-height: 100dvh;
   place-items: center;
   align-content: center;
