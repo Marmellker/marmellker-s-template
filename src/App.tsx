@@ -135,18 +135,18 @@ type ModificationSettings = {
 };
 
 const MODES: Array<{ id: Mode; title: string; subtitle: string }> = [
-  { id: 'wave', title: 'Волна', subtitle: 'резкие диагонали' },
+  { id: 'wave', title: 'Искра', subtitle: 'резкие диагонали' },
   { id: 'flipWave', title: 'Flip Wave', subtitle: 'переключение направления' },
   { id: 'laser', title: 'Вектор', subtitle: 'скоростной плавный полёт' },
   { id: 'orbit', title: 'Орбита', subtitle: 'вращение по пунктирной орбите' },
-  { id: 'ship', title: 'Корабль', subtitle: 'плавный полёт' },
-  { id: 'ufo', title: 'UFO', subtitle: 'прыжки в воздухе' },
+  { id: 'ship', title: 'Глайдер', subtitle: 'плавный полёт' },
+  { id: 'ufo', title: 'Капсула', subtitle: 'прыжки в воздухе' },
 ];
 
 const DIFFICULTIES: Array<{ id: Difficulty; title: string; multiplier: number }> = [
   { id: 'easy', title: 'Лёгкий', multiplier: 0.72 },
   { id: 'medium', title: 'Средний', multiplier: 1 },
-  { id: 'hard', title: 'Тяжёлый', multiplier: 1.32 },
+  { id: 'hard', title: 'Сложный', multiplier: 1.32 },
 ];
 
 const SPEED_MODES: Array<{ id: SpeedMode; title: string; multiplier: number }> = [
@@ -193,12 +193,12 @@ const COLOR_PALETTE: Array<{ title: string; value: string }> = [
 
 const COLOR_TARGETS: Array<{ id: keyof ColorSettings; title: string }> = [
   { id: 'trail', title: 'След' },
-  { id: 'wave', title: 'Волна' },
+  { id: 'wave', title: 'Искра' },
   { id: 'flipWave', title: 'Flip Wave' },
   { id: 'laser', title: 'Вектор' },
   { id: 'orbit', title: 'Орбита' },
-  { id: 'ship', title: 'Корабль' },
-  { id: 'ufo', title: 'UFO' },
+  { id: 'ship', title: 'Глайдер' },
+  { id: 'ufo', title: 'Капсула' },
 ];
 
 const CONTROL_KEYS = new Set([
@@ -702,6 +702,145 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
           width: 30,
           height: 30,
           color: '#d9e2ec',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
+  if (!splitMode && choice.mode === 'flipWave' && choice.difficulty === 'hard') {
+    const spacing = 430;
+    const width = 58;
+    const centers = [270, 212, 326, 236, 304, 184, 352, 246, 318, 206, 286, 342];
+
+    for (let x = 900; x < levelLength - 880; x += spacing) {
+      const section = Math.floor((x - 900) / spacing);
+      const center =
+        centers[section % centers.length] +
+        Math.sin(section * 0.66) * 12 +
+        Math.sin(x / 820) * 10;
+      const gap = 164 + Math.sin(section * 0.84) * 8;
+      const topHeight = Math.max(58, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      const spikeHeight = 32;
+      const spikeWidth = 38;
+      const fromTop = section % 4 === 1 || section % 4 === 2;
+      for (let index = 0; index < (section % 5 === 0 ? 3 : 2); index += 1) {
+        obstacles.push({
+          kind: 'spike',
+          direction: fromTop ? 'down' : 'up',
+          x: x + 78 + index * (spikeWidth + 10),
+          y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
+          width: spikeWidth,
+          height: spikeHeight,
+          color: fromTop ? '#2f4f74' : '#8f3d58',
+        });
+      }
+
+      if (section % 3 !== 1) {
+        obstacles.push({
+          x: x + 206,
+          y: center + (section % 2 === 0 ? 42 : -74),
+          width: 42,
+          height: 32,
+          color: '#3d2c8d',
+        });
+      }
+
+      if (section % 4 !== 0) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + 292,
+          y: center + (section % 4 === 1 ? 52 : section % 4 === 2 ? -82 : 18),
+          width: 32,
+          height: 32,
+          color: '#d9e2ec',
+        });
+      }
+
+      if (section % 6 === 3) {
+        obstacles.push({
+          kind: 'spikedBlock',
+          x: x + 346,
+          y: center - 18,
+          width: 38,
+          height: 36,
+          color: '#6842c2',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
+  if (!splitMode && choice.mode === 'laser') {
+    const spacing = choice.difficulty === 'easy' ? 380 : choice.difficulty === 'medium' ? 350 : 320;
+    const width = choice.difficulty === 'easy' ? 72 : choice.difficulty === 'medium' ? 78 : 96;
+    const baseGap = choice.difficulty === 'easy' ? 158 : choice.difficulty === 'medium' ? 138 : 114;
+    const straightCenters = choice.difficulty === 'easy'
+      ? [270, 246, 294, 262, 312]
+      : choice.difficulty === 'medium'
+        ? [270, 230, 310, 252, 330, 218]
+        : [270, 232, 310, 250, 326, 238, 302, 226];
+
+    for (let x = 900; x < levelLength - 880; x += spacing) {
+      const section = Math.floor((x - 900) / spacing);
+      const straightRun = section % 6 < (choice.difficulty === 'easy' ? 3 : choice.difficulty === 'medium' ? 4 : 5);
+      const straightCenter = straightCenters[Math.floor(section / (choice.difficulty === 'hard' ? 3 : 2)) % straightCenters.length];
+      const center = straightRun
+        ? straightCenter + Math.sin(x / 1120) * (choice.difficulty === 'hard' ? 5 : 8)
+        : PLAYER_CENTER_Y + Math.sin(x / 560) * (choice.difficulty === 'hard' ? 116 : 72) + (random() - 0.5) * 28;
+      const gap = baseGap + Math.sin(section * 0.78) * (choice.difficulty === 'easy' ? 10 : choice.difficulty === 'medium' ? 7 : 5);
+      const topHeight = Math.max(58, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = straightRun ? '#203047' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      const shouldAddStraightMarker =
+        straightRun && section % (choice.difficulty === 'easy' ? 2 : 1) === 0;
+      if (shouldAddStraightMarker) {
+        obstacles.push({
+          x: x + spacing * 0.56,
+          y: center + (section % 4 < 2 ? gap / 2 + 18 : -gap / 2 - (choice.difficulty === 'hard' ? 64 : 56)),
+          width: choice.difficulty === 'hard' ? 58 : 42,
+          height: choice.difficulty === 'hard' ? 48 : 36,
+          color: '#3d2c8d',
+        });
+      }
+
+      if (choice.difficulty !== 'easy' || section % 3 === 1) {
+        const sawSize = choice.difficulty === 'easy' ? 30 : choice.difficulty === 'hard' ? 42 : 36;
+        obstacles.push({
+          kind: 'saw',
+          x: x + spacing * 0.72,
+          y: center + (section % 2 === 0 ? -gap / 2 - (choice.difficulty === 'hard' ? 44 : 34) : gap / 2 + 8),
+          width: sawSize,
+          height: sawSize,
+          color: '#d9e2ec',
+        });
+      }
+
+      if (choice.difficulty === 'hard' && section % 3 !== 0) {
+        const spikeHeight = 34;
+        const fromTop = section % 2 === 0;
+        obstacles.push({
+          kind: 'spike',
+          direction: fromTop ? 'down' : 'up',
+          x: x + spacing * 0.28,
+          y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
+          width: 42,
+          height: spikeHeight,
+          color: fromTop ? '#2f4f74' : '#8f3d58',
         });
       }
     }
@@ -2180,12 +2319,16 @@ export default function App() {
 
   const respawnPractice = () => {
     const checkpoint = checkpointsRef.current[checkpointsRef.current.length - 1];
+    const shadowTeleportsLeft = shadowTeleportsLeftRef.current;
+    const shadowCooldownUntil = shadowCooldownUntilRef.current;
     attemptRef.current += 1;
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
     deathAnimationRef.current = null;
     winAnimationRef.current = null;
     resetRunState();
+    shadowTeleportsLeftRef.current = shadowTeleportsLeft;
+    shadowCooldownUntilRef.current = shadowCooldownUntil;
 
     if (checkpoint) {
       elapsedRef.current = checkpoint.time;
@@ -2828,29 +2971,42 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'paused') return;
 
-    const resumeOnEnter = (event: KeyboardEvent) => {
+    const resumeOnPauseKey = (event: KeyboardEvent) => {
       if (event.repeat) return;
-      if (event.code !== 'Backspace') return;
+      if (event.code !== 'Backspace' && event.code !== 'KeyP') return;
       event.preventDefault();
       resumeRun();
     };
 
-    window.addEventListener('keydown', resumeOnEnter);
-    return () => window.removeEventListener('keydown', resumeOnEnter);
+    window.addEventListener('keydown', resumeOnPauseKey);
+    return () => window.removeEventListener('keydown', resumeOnPauseKey);
   }, [screen]);
 
   useEffect(() => {
     if (screen !== 'playing') return;
 
-    const pauseOnBackspace = (event: KeyboardEvent) => {
+    const toggleHitboxesOnKey = (event: KeyboardEvent) => {
+      if (event.repeat || event.code !== 'KeyH') return;
+      event.preventDefault();
+      toggleHitboxes();
+    };
+
+    window.addEventListener('keydown', toggleHitboxesOnKey);
+    return () => window.removeEventListener('keydown', toggleHitboxesOnKey);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== 'playing') return;
+
+    const pauseOnPauseKey = (event: KeyboardEvent) => {
       if (event.repeat) return;
-      if (event.code !== 'Backspace') return;
+      if (event.code !== 'Backspace' && event.code !== 'KeyP') return;
       event.preventDefault();
       pauseRun();
     };
 
-    window.addEventListener('keydown', pauseOnBackspace);
-    return () => window.removeEventListener('keydown', pauseOnBackspace);
+    window.addEventListener('keydown', pauseOnPauseKey);
+    return () => window.removeEventListener('keydown', pauseOnPauseKey);
   }, [screen]);
 
   useEffect(() => {
@@ -3318,7 +3474,7 @@ export default function App() {
               </div>
               <div className="control-row">
                 <span>Пауза / продолжить</span>
-                <strong>Backspace</strong>
+                <strong>Backspace или P</strong>
               </div>
               <div className="control-row">
                 <span>Рестарт после смерти</span>
@@ -3331,6 +3487,10 @@ export default function App() {
               <div className="control-row">
                 <span>Удалить чекпоинт</span>
                 <strong>D</strong>
+              </div>
+              <div className="control-row">
+                <span>Хитбоксы</span>
+                <strong>H</strong>
               </div>
               <div className="control-row">
                 <span>Телепорт к тени</span>
