@@ -65,11 +65,19 @@ button {
 }
 
 .game-shell.levelSelect {
-  grid-template-columns: minmax(300px, 560px);
+  grid-template-columns: minmax(300px, 760px);
   justify-content: center;
   align-content: center;
   min-height: 100dvh;
   padding: 24px;
+}
+
+.game-shell.tutorialSelect {
+  grid-template-columns: minmax(320px, 900px);
+  justify-content: center;
+  align-content: center;
+  min-height: 100dvh;
+  padding: 32px;
 }
 
 .game-shell.menu {
@@ -409,6 +417,79 @@ canvas {
   animation: resultPanelIn 320ms ease both;
 }
 
+.tutorial-select-panel {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.tutorial-menu-panel {
+  width: min(900px, calc(100vw - 64px));
+  display: grid;
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  animation: menuFadeIn 260ms ease both;
+}
+
+.tutorial-menu-header {
+  grid-column: 1 / -1;
+  text-align: center;
+  margin-bottom: 2cm;
+  animation: menuItemIn 320ms ease both;
+}
+
+.tutorial-menu-panel > .tutorial-button,
+.tutorial-menu-actions > .menu-button {
+  background: rgba(13, 18, 31, 0.72);
+  backdrop-filter: blur(12px);
+  animation: menuItemIn 320ms ease both;
+}
+
+.tutorial-menu-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  animation: menuItemIn 320ms ease both;
+}
+
+.tutorial-menu-actions > .menu-button {
+  width: 100%;
+  min-height: 62px;
+}
+
+.tutorial-menu-panel > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.tutorial-menu-panel > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.tutorial-menu-panel > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+
+.tutorial-menu-panel > *:nth-child(5) {
+  animation-delay: 160ms;
+}
+
+.tutorial-menu-panel > *:nth-child(6) {
+  animation-delay: 200ms;
+}
+
+.tutorial-menu-panel > *:nth-child(7) {
+  animation-delay: 240ms;
+}
+
+.tutorial-menu-panel > *:nth-child(8) {
+  animation-delay: 280ms;
+}
+
 .level-select-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -449,6 +530,24 @@ canvas {
   opacity: 0.58;
 }
 
+.level-select-button.tutorial-overview {
+  border-color: rgba(57, 208, 255, 0.34);
+  background: rgba(57, 208, 255, 0.08);
+}
+
+.level-select-button.tutorial-overview:hover {
+  border-color: rgba(57, 208, 255, 0.52);
+}
+
+.level-select-button.tutorial-button {
+  min-height: 92px;
+  background: rgba(13, 18, 31, 0.78);
+}
+
+.level-select-button.tutorial-button:hover {
+  border-color: rgba(57, 208, 255, 0.46);
+}
+
 .level-select-button span {
   font-size: 24px;
   font-weight: 900;
@@ -458,6 +557,35 @@ canvas {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.mode-title,
+.mode-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mode-summary {
+  gap: 8px;
+}
+
+.mode-title-label {
+  min-width: 0;
+}
+
+.mode-model-icon {
+  flex: 0 0 auto;
+  display: block;
+  width: 42px;
+  height: 30px;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.2));
+}
+
+.mode-summary .mode-model-icon {
+  width: 30px;
+  height: 22px;
 }
 
 .menu-panel {
@@ -1390,12 +1518,14 @@ h1 {
     margin-inline: auto;
   }
 
-  .game-shell.menu {
+  .game-shell.menu,
+  .game-shell.tutorialSelect {
     grid-template-columns: 1fr;
     align-content: center;
   }
 
-  .menu-panel {
+  .menu-panel,
+  .tutorial-menu-panel {
     width: min(720px, calc(100vw - 48px));
     grid-template-columns: repeat(3, minmax(180px, 1fr));
   }
@@ -1460,12 +1590,15 @@ h1 {
   }
 
   .menu-panel,
+  .tutorial-menu-panel,
+  .tutorial-menu-actions,
   .menu-action-row,
   .secondary-action-row {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .menu-panel {
+  .menu-panel,
+  .tutorial-menu-panel {
     width: 100%;
     padding: 0;
   }
@@ -1476,6 +1609,7 @@ h1 {
   .menu-panel > .menu-button,
   .menu-panel > .controls-menu-button,
   .menu-panel > .score-row,
+  .tutorial-menu-actions,
   .secondary-action-row,
   .menu-action-row .practice-menu-button {
     grid-column: 1;

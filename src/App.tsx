@@ -9,6 +9,7 @@ type SpeedMode = 'normal' | 'fast' | 'superfast';
 type Screen =
   | 'home'
   | 'levelSelect'
+  | 'tutorialSelect'
   | 'menu'
   | 'playing'
   | 'paused'
@@ -65,6 +66,19 @@ type Level = {
   orbs: Orb[];
   infinite?: boolean;
   generatedUntil?: number;
+  tutorial?: TutorialInfo;
+};
+
+type TutorialInfo = {
+  title: string;
+  steps: TutorialStep[];
+};
+
+type TutorialStep = {
+  start: number;
+  end: number;
+  instruction: string;
+  hint: string;
 };
 
 type Player = {
@@ -144,6 +158,8 @@ type SavedPausedRun = {
   modifications: ModificationSettings;
   infiniteMode?: boolean;
   infiniteLevel?: Level | null;
+  tutorialMode?: boolean;
+  tutorialLevel?: Level | null;
   elapsed: number;
   attempt: number;
   player: Player;
@@ -197,8 +213,192 @@ const DEFAULT_COLORS: ColorSettings = {
   ufo: '#facc15',
 };
 
+const TUTORIALS: Record<Mode, TutorialInfo> = {
+  wave: {
+    title: 'Туториал: Искра',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Зажми кнопку действия, чтобы лететь вверх по диагонали.',
+        hint: 'Отпусти кнопку, чтобы Искра пошла вниз.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Чередуй короткие нажатия и отпускания.',
+        hint: 'Так получится ровный зигзаг между стенами.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Перед узким проходом меняй направление заранее.',
+        hint: 'Не жди, пока моделька окажется прямо у стены.',
+      },
+    ],
+  },
+  flipWave: {
+    title: 'Туториал: Flip Wave',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Нажми один раз, чтобы поменять направление полёта.',
+        hint: 'Удерживать кнопку в этом режиме не нужно.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Каждое новое нажатие снова разворачивает диагональ.',
+        hint: 'Нажимай перед стеной, а не после касания.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Лови ритм одиночных нажатий.',
+        hint: 'Один проход - одно точное переключение.',
+      },
+    ],
+  },
+  laser: {
+    title: 'Туториал: Вектор',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Зажми кнопку действия, чтобы плавно подниматься.',
+        hint: 'Отпусти кнопку, чтобы Вектор начал снижаться.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Движение сглаженное, поэтому реагируй заранее.',
+        hint: 'Нажимай чуть раньше, чем в резких режимах.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Веди Вектор по центру коридора.',
+        hint: 'Маленькие корректировки безопаснее долгого удержания.',
+      },
+    ],
+  },
+  orbit: {
+    title: 'Туториал: Орбита',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Нажми, чтобы сменить направление вращения.',
+        hint: 'Моделька движется по пунктирной орбите.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Смотри на дугу орбиты перед моделькой.',
+        hint: 'Она показывает, куда тебя вынесет дальше.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Переключайся до входа в узкий проход.',
+        hint: 'Так проще пролетать между верхом и низом.',
+      },
+    ],
+  },
+  ship: {
+    title: 'Туториал: Глайдер',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Зажми кнопку действия, чтобы Глайдер поднимался.',
+        hint: 'Отпусти, чтобы он начал планировать вниз.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Держи высоту короткими мягкими касаниями.',
+        hint: 'Долгое удержание быстро унесёт вверх.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Выравнивайся перед каждым коридором.',
+        hint: 'Центр прохода - самая спокойная траектория.',
+      },
+    ],
+  },
+  ufo: {
+    title: 'Туториал: Капсула',
+    steps: [
+      {
+        start: 0,
+        end: 9_000,
+        instruction: 'Каждое нажатие делает один прыжок в воздухе.',
+        hint: 'Между прыжками Капсула падает.',
+      },
+      {
+        start: 10_000,
+        end: 20_000,
+        instruction: 'Нажимай ритмично, чтобы держаться на нужной высоте.',
+        hint: 'Слишком частые прыжки поднимут тебя к потолку.',
+      },
+      {
+        start: 21_000,
+        end: 31_000,
+        instruction: 'Зелёные орбы помогают сделать дополнительный прыжок.',
+        hint: 'Заходи в них по центру и нажимай вовремя.',
+      },
+    ],
+  },
+};
+
 function getModeColor(colors: ColorSettings, mode: Mode) {
   return colors[mode] || DEFAULT_COLORS[mode];
+}
+
+function ModeModelIcon({ mode }: { mode: Mode }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    const width = 92;
+    const height = 58;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    drawPlayer(
+      ctx,
+      {
+        x: mode === 'laser' ? 48 : mode === 'ship' ? 45 : 46,
+        y: height / 2,
+        vy: 0,
+        angle: mode === 'wave' || mode === 'flipWave' ? -0.28 : 0,
+        cooldown: 0,
+      },
+      mode,
+      false,
+      DEFAULT_COLORS,
+      false,
+    );
+  }, [mode]);
+
+  return <canvas className="mode-model-icon" ref={canvasRef} aria-hidden="true" />;
+}
+
+function ModeTitle({ mode, title }: { mode: Mode; title: string }) {
+  return (
+    <span className="mode-title">
+      <ModeModelIcon mode={mode} />
+      <span className="mode-title-label">{title}</span>
+    </span>
+  );
 }
 
 function getTrailColor(colors: ColorSettings) {
@@ -1031,6 +1231,70 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   return { duration, speed, obstacles, orbs };
 }
 
+function buildTutorialLevel(mode: Mode): Level {
+  const speed = mode === 'laser' ? 195 : 185;
+  const duration = 38_000;
+  const levelLength = (speed * duration) / 1000;
+  const gapByMode: Record<Mode, number> = {
+    wave: 260,
+    flipWave: 270,
+    laser: 238,
+    orbit: 270,
+    ship: 265,
+    ufo: 286,
+  };
+  const centersByMode: Record<Mode, number[]> = {
+    wave: [270, 218, 322, 236, 302, 258, 332],
+    flipWave: [270, 326, 220, 312, 236, 292, 248],
+    laser: [270, 246, 298, 258, 316, 240, 286],
+    orbit: [270, 226, 316, 246, 334, 254, 302],
+    ship: [270, 236, 310, 252, 326, 246, 292],
+    ufo: [300, 250, 336, 266, 318, 238, 292],
+  };
+  const obstacles: Obstacle[] = [];
+  const orbs: Orb[] = [];
+  const spacing = 720;
+  const wallWidth = mode === 'laser' ? 76 : 64;
+  const gap = gapByMode[mode];
+  const centers = centersByMode[mode];
+
+  for (let x = 1_160; x < levelLength - 520; x += spacing) {
+    const section = Math.floor((x - 1_160) / spacing);
+    const center = centers[section % centers.length];
+    const topHeight = Math.max(42, center - gap / 2);
+    const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+    const bottomHeight = HEIGHT - bottomY - 52;
+    const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+    obstacles.push({ x, y: 0, width: wallWidth, height: topHeight, color });
+    obstacles.push({ x, y: bottomY, width: wallWidth, height: bottomHeight, color });
+
+    if (section > 0 && section % 2 === 0) {
+      obstacles.push({
+        kind: 'spike',
+        direction: section % 4 === 0 ? 'down' : 'up',
+        x: x + 250,
+        y: section % 4 === 0 ? 0 : HEIGHT - 86,
+        width: 38,
+        height: 34,
+        color: section % 4 === 0 ? '#2f4f74' : '#8f3d58',
+      });
+    }
+
+    if (mode === 'ufo') {
+      orbs.push({ x: x + spacing * 0.46, y: center - 28, radius: 14 });
+    }
+  }
+
+  return {
+    duration,
+    speed,
+    obstacles,
+    orbs,
+    tutorial: TUTORIALS[mode],
+  };
+}
+
 function normalizeObstacle(obstacle: Partial<Obstacle>, fallbackX: number): Obstacle {
   const kind = obstacle.kind && ['block', 'spike', 'saw', 'spikedBlock'].includes(obstacle.kind) ? obstacle.kind : 'block';
   const width = clamp(Number(obstacle.width) || 56, 24, 120);
@@ -1767,6 +2031,46 @@ function drawWinEffect(
   ctx.restore();
 }
 
+function drawCenteredWrappedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+) {
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let line = '';
+
+  words.forEach((word) => {
+    const nextLine = line ? `${line} ${word}` : word;
+    if (ctx.measureText(nextLine).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = nextLine;
+    }
+  });
+
+  if (line) {
+    lines.push(line);
+  }
+
+  lines.forEach((item, index) => {
+    if (ctx.lineWidth > 0) {
+      ctx.strokeText(item, x, y + index * lineHeight);
+    }
+    ctx.fillText(item, x, y + index * lineHeight);
+  });
+
+  return lines.length;
+}
+
+function getTutorialStep(tutorial: TutorialInfo, elapsed: number) {
+  return tutorial.steps.find((step) => elapsed >= step.start && elapsed <= step.end) ?? null;
+}
+
 function drawGame(
   canvas: HTMLCanvasElement,
   level: Level,
@@ -2138,6 +2442,33 @@ function drawGame(
     ctx.fillText(level.infinite ? `∞ ${Math.floor(elapsed / 1000)} с` : `${Math.round(progress * 100)}%`, 24, level.infinite ? 42 : 66);
   }
 
+  const tutorialStep = level.tutorial ? getTutorialStep(level.tutorial, elapsed) : null;
+  if (showHud && level.tutorial && tutorialStep) {
+    const fadeIn = clamp((elapsed - tutorialStep.start) / 900, 0, 1);
+    const fadeOut = clamp((tutorialStep.end - elapsed) / 1_400, 0, 1);
+    const fade = Math.min(fadeIn, fadeOut);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.shadowColor = 'rgba(0,0,0,0.86)';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.52)';
+    ctx.textAlign = 'center';
+    ctx.font = '900 18px Inter, system-ui, sans-serif';
+    ctx.strokeText(level.tutorial.title, WIDTH / 2, 94);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(level.tutorial.title, WIDTH / 2, 94);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 18px Inter, system-ui, sans-serif';
+    const instructionY = 122;
+    ctx.strokeStyle = 'rgba(0,0,0,0.62)';
+    const instructionLines = drawCenteredWrappedText(ctx, tutorialStep.instruction, WIDTH / 2, instructionY, 560, 22);
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.font = '700 14px Inter, system-ui, sans-serif';
+    drawCenteredWrappedText(ctx, tutorialStep.hint, WIDTH / 2, 150 + Math.max(0, instructionLines - 1) * 18, 560, 18);
+    ctx.restore();
+  }
+
   if (modifications.shadow) {
     const cooldownLeft = Math.max(0, Math.ceil(shadowCooldownUntil - elapsed));
     ctx.fillStyle = 'rgba(10,15,27,0.68)';
@@ -2319,12 +2650,16 @@ export default function App() {
   const [infiniteMode, setInfiniteMode] = useState(false);
   const [infiniteLevel, setInfiniteLevel] = useState<Level | null>(null);
   const [infiniteLoading, setInfiniteLoading] = useState(false);
+  const [tutorialMode, setTutorialMode] = useState(false);
+  const [tutorialLevel, setTutorialLevel] = useState<Level | null>(null);
   const [screen, setScreen] = useState<Screen>('home');
   const [records, setRecords] = useState<RecordMap>(() => loadRecords());
   const [infiniteRecords, setInfiniteRecords] = useState<RecordMap>(() => loadInfiniteRecords());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
-  const [lastResult, setLastResult] = useState<{ progress: number; completed: boolean; infinite?: boolean } | null>(null);
+  const [lastResult, setLastResult] = useState<
+    { progress: number; completed: boolean; infinite?: boolean; tutorialMode?: boolean; mode?: Mode } | null
+  >(null);
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
   const [difficultyPickerOpen, setDifficultyPickerOpen] = useState(false);
@@ -2340,7 +2675,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
 
   const regularLevel = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
-  const level = infiniteMode && infiniteLevel ? infiniteLevel : regularLevel;
+  const level = infiniteMode && infiniteLevel ? infiniteLevel : tutorialMode && tutorialLevel ? tutorialLevel : regularLevel;
   const homePreviewLevel = useMemo(() => buildLevel(homePreview.choice, 'normal', false), [homePreview.choice]);
   const best = records[recordKey(choice)] ?? 0;
   const infiniteBest = infiniteRecords[infiniteRecordKey(choice.mode)] ?? 0;
@@ -2725,7 +3060,7 @@ export default function App() {
       if (saveProgress && infiniteMode) {
         const saved = saveInfiniteRecord(choice.mode, progress);
         setInfiniteRecords((current) => ({ ...current, [infiniteRecordKey(choice.mode)]: saved }));
-      } else if (saveProgress) {
+      } else if (saveProgress && !tutorialMode) {
         const saved = saveRecord(choice, completed ? 100 : progress);
         setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
       }
@@ -2733,11 +3068,15 @@ export default function App() {
         progress: Math.round(infiniteMode ? progress : completed ? 100 : progress),
         completed,
         infinite: infiniteMode,
+        tutorialMode,
+        mode: choice.mode,
       });
       setInfiniteMode(false);
+      setTutorialMode(false);
+      setTutorialLevel(null);
       setScreen('result');
     },
-    [choice, infiniteMode],
+    [choice, infiniteMode, tutorialMode],
   );
 
   const resetRunState = () => {
@@ -2764,6 +3103,8 @@ export default function App() {
       modifications,
       infiniteMode,
       infiniteLevel,
+      tutorialMode,
+      tutorialLevel,
       elapsed: elapsedRef.current,
       attempt: attemptRef.current,
       player: playerRef.current,
@@ -2793,6 +3134,8 @@ export default function App() {
     setModifications({ ...DEFAULT_MODIFICATIONS, ...saved.modifications });
     setInfiniteMode(Boolean(saved.infiniteMode && saved.infiniteLevel));
     setInfiniteLevel(saved.infiniteLevel ?? null);
+    setTutorialMode(Boolean(saved.tutorialMode && saved.tutorialLevel));
+    setTutorialLevel(saved.tutorialLevel ?? null);
     elapsedRef.current = saved.elapsed;
     attemptRef.current = saved.attempt;
     playerRef.current = saved.player;
@@ -2907,6 +3250,8 @@ export default function App() {
     clearPausedRun();
     setInfiniteMode(false);
     setInfiniteLevel(null);
+    setTutorialMode(false);
+    setTutorialLevel(null);
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
@@ -2940,6 +3285,53 @@ export default function App() {
     setScreen('playing');
   };
 
+  const startTutorial = (mode: Mode) => {
+    playSound('start');
+    const nextChoice: Choice = { mode, difficulty: 'easy' };
+    const nextLevel = buildTutorialLevel(mode);
+    clearPausedRun();
+    setChoice(nextChoice);
+    setSpeedMode('normal');
+    setPracticeMode(false);
+    setModifications(DEFAULT_MODIFICATIONS);
+    setInfiniteMode(false);
+    setInfiniteLevel(null);
+    setTutorialMode(true);
+    setTutorialLevel(nextLevel);
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    attemptRef.current += 1;
+    elapsedRef.current = 0;
+    lastTimeRef.current = 0;
+    inputRef.current = false;
+    ufoJumpQueuedRef.current = false;
+    resetRunState();
+    checkpointsRef.current = [];
+    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
+    practiceRespawnUntilRef.current = 0;
+    const playerStartX = getPlayerStartX(false, nextLevel.speed);
+    playerRef.current = {
+      x: playerStartX,
+      y: PLAYER_CENTER_Y,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
+    splitPlayerRef.current = {
+      x: playerStartX,
+      y: PLAYER_CENTER_Y + SPLIT_PLAYER_OFFSET,
+      vy: 0,
+      angle: 0,
+      cooldown: 0,
+    };
+    setLastResult(null);
+    setMenuAnimationDisabled(false);
+    setScreen('playing');
+  };
+
   const startInfiniteRun = async () => {
     if (infiniteLoading) return;
     playSound('start');
@@ -2954,6 +3346,8 @@ export default function App() {
     setPracticeMode(false);
     setInfiniteLevel(nextLevel);
     setInfiniteMode(true);
+    setTutorialMode(false);
+    setTutorialLevel(null);
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
@@ -3010,6 +3404,7 @@ export default function App() {
 
   const returnToMenu = () => {
     playSound('click');
+    const targetScreen: Screen = tutorialMode || lastResult?.tutorialMode ? 'tutorialSelect' : 'menu';
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
     }
@@ -3025,8 +3420,10 @@ export default function App() {
     setMenuAnimationDisabled(false);
     setInfiniteMode(false);
     setInfiniteLevel(null);
+    setTutorialMode(false);
+    setTutorialLevel(null);
     clearPausedRun();
-    setScreen('menu');
+    setScreen(targetScreen);
   };
 
   const closeMenuWindow = () => {
@@ -3045,6 +3442,8 @@ export default function App() {
     setMenuAnimationDisabled(true);
     setInfiniteMode(false);
     setInfiniteLevel(null);
+    setTutorialMode(false);
+    setTutorialLevel(null);
     clearPausedRun();
     setScreen('menu');
   };
@@ -3066,6 +3465,8 @@ export default function App() {
     closeAuth();
     setInfiniteMode(false);
     setInfiniteLevel(null);
+    setTutorialMode(false);
+    setTutorialLevel(null);
     clearPausedRun();
     setScreen('home');
   };
@@ -3074,6 +3475,11 @@ export default function App() {
     playSound('start');
     setMenuAnimationDisabled(false);
     setScreen('menu');
+  };
+
+  const openTutorialLevels = () => {
+    playSound('start');
+    setScreen('tutorialSelect');
   };
 
   const updateColor = (target: keyof ColorSettings, value: string) => {
@@ -3529,7 +3935,7 @@ export default function App() {
       window.removeEventListener('pagehide', saveOnPageLeave);
       window.removeEventListener('beforeunload', saveOnPageLeave);
     };
-  }, [choice, modifications, practiceMode, screen, speedMode]);
+  }, [choice, modifications, practiceMode, screen, speedMode, tutorialLevel, tutorialMode]);
 
   useEffect(() => {
     if (screen !== 'paused' || !canvasRef.current) return;
@@ -3618,11 +4024,11 @@ export default function App() {
       timers.forEach((timer) => window.clearTimeout(timer));
       setHomePreviewTransitioning(false);
     };
-  }, [screen]);
+  }, [lastResult, screen]);
 
   useEffect(() => {
     attemptRef.current = 0;
-  }, [choice, speedMode, modifications.splitMode, practiceMode]);
+  }, [choice, speedMode, modifications.splitMode, practiceMode, tutorialMode]);
 
   useEffect(() => {
     if (screen !== 'result') return;
@@ -3631,7 +4037,11 @@ export default function App() {
       if (event.repeat) return;
       if (event.code !== 'Enter' && event.code !== 'Space') return;
       event.preventDefault();
-      startRun();
+      if (lastResult?.tutorialMode && lastResult.mode) {
+        startTutorial(lastResult.mode);
+      } else {
+        startRun();
+      }
     };
 
     window.addEventListener('keydown', restartOnEnter);
@@ -3861,9 +4271,9 @@ export default function App() {
           </div>
 
           <div className="level-select-actions">
-            <button className="level-select-button" disabled type="button">
+            <button className="level-select-button tutorial-overview" onClick={openTutorialLevels} type="button">
               <span>Туториал</span>
-              <small>Скоро</small>
+              <small>Лёгкие уровни с подсказками по управлению</small>
             </button>
             <button className="level-select-button active" onClick={openCustomLevels} type="button">
               <span>Кастом</span>
@@ -3874,6 +4284,39 @@ export default function App() {
           <button className="menu-button" onClick={returnToHome} type="button">
             Главный экран
           </button>
+        </section>
+      )}
+
+      {screen === 'tutorialSelect' && (
+        <section className="tutorial-menu-panel" aria-label="Выбор туториала">
+          <div className="tutorial-menu-header">
+            <p className="eyebrow">BeatShift</p>
+            <h1>Туториал</h1>
+          </div>
+
+          {MODES.map((mode) => (
+            <button className="level-select-button tutorial-button" key={mode.id} onClick={() => startTutorial(mode.id)} type="button">
+              <ModeTitle mode={mode.id} title={mode.title} />
+            </button>
+          ))}
+
+          <div className="tutorial-menu-actions">
+            <button
+              className="menu-button controls-menu-button"
+              onClick={() => {
+                setModePickerOpen(false);
+                setSpeedPickerOpen(false);
+                setDifficultyPickerOpen(false);
+                setControlsPickerOpen(true);
+              }}
+              type="button"
+            >
+              Управление
+            </button>
+            <button className="menu-button" onClick={() => setScreen('levelSelect')} type="button">
+              Назад
+            </button>
+          </div>
         </section>
       )}
 
@@ -3968,7 +4411,10 @@ export default function App() {
             type="button"
           >
             <span>Режимы</span>
-            <small>{selectedMode.title}</small>
+            <small className="mode-summary">
+              <ModeModelIcon mode={selectedMode.id} />
+              {selectedMode.title}
+            </small>
           </button>
 
           <button
@@ -4103,7 +4549,7 @@ export default function App() {
                   }}
                   type="button"
                 >
-                  <span>{mode.title}</span>
+                  <ModeTitle mode={mode.id} title={mode.title} />
                   <small>{mode.subtitle}</small>
                 </button>
               ))}
@@ -4188,7 +4634,7 @@ export default function App() {
         </div>
       )}
 
-      {screen === 'menu' && controlsPickerOpen && (
+      {(screen === 'menu' || screen === 'tutorialSelect') && controlsPickerOpen && (
         <div
           className={modalClosing ? 'modal-backdrop modal-closing' : 'modal-backdrop'}
           onClick={() => closeModalWithFade(() => setControlsPickerOpen(false))}
@@ -4446,7 +4892,11 @@ export default function App() {
           </div>
 
           <div className="result-actions">
-            <button className="start-button" onClick={lastResult.infinite ? startInfiniteRun : startRun} type="button">
+            <button
+              className="start-button"
+              onClick={lastResult.infinite ? startInfiniteRun : lastResult.tutorialMode && lastResult.mode ? () => startTutorial(lastResult.mode!) : startRun}
+              type="button"
+            >
               Рестарт
             </button>
             <button className="menu-button" onClick={returnToMenu} type="button">
