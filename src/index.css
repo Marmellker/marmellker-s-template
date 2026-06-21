@@ -302,6 +302,12 @@ canvas {
   backdrop-filter: blur(12px);
 }
 
+.practice-tool-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
 .practice-tool {
   width: 48px;
   height: 44px;
@@ -338,7 +344,17 @@ canvas {
   height: 3px;
   border-radius: 999px;
   background: #ffffff;
-  transform: rotate(-45deg);
+  transform: rotate(0deg);
+}
+
+.practice-key {
+  min-height: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .scanline {
@@ -624,6 +640,10 @@ canvas {
 
 .menu-panel > .controls-menu-button {
   grid-column: 2;
+}
+
+.menu-panel > .menu-back-button {
+  grid-column: 5;
 }
 
 .secondary-action-row {
@@ -1102,6 +1122,20 @@ h1 {
   animation: modalPopIn 220ms ease both;
 }
 
+.mode-picker-modal {
+  width: min(760px, 100%);
+}
+
+.mode-picker-modal .picker {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+}
+
+.mode-picker-modal .option {
+  height: 100%;
+}
+
 .controls-modal {
   width: min(520px, 100%);
 }
@@ -1545,6 +1579,10 @@ h1 {
     grid-column: 2;
   }
 
+  .menu-panel > .menu-back-button {
+    grid-column: 3;
+  }
+
   .secondary-action-row {
     grid-column: 1 / -1;
   }
@@ -1622,6 +1660,10 @@ h1 {
 
   .records-mode-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mode-picker-modal .picker {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .records-mode-cell span {

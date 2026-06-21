@@ -456,7 +456,6 @@ const PLAYER_DEFAULT_X = 142;
 const PLAYER_SHADOW_MAX_X = WIDTH - 116;
 const SHADOW_DELAY_MS = 2_000;
 const SHADOW_FADE_MS = 600;
-const PRACTICE_CHECKPOINT_COOLDOWN_MS = 2_000;
 const PRACTICE_AUTO_CHECKPOINT_MS = 5_000;
 const PRACTICE_RESPAWN_DELAY_MS = 500;
 const DEATH_ANIMATION_MS = 900;
@@ -725,7 +724,7 @@ function choiceSeed(choice: Choice) {
 function levelDurationByDifficulty(difficulty: Difficulty) {
   if (difficulty === 'easy') return 60_000;
   if (difficulty === 'medium') return 90_000;
-  return 120_000;
+  return 110_000;
 }
 
 function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): Level {
@@ -1110,13 +1109,17 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   const isOrbit = choice.mode === 'orbit';
   const spacing = splitMode ? 560 : isFlipWave ? 520 : isLaser ? 460 : isOrbit ? 500 : choice.mode === 'wave' ? 410 : choice.mode === 'ship' ? 470 : 440;
   const width = splitMode ? 54 + difficulty.multiplier * 12 : isFlipWave || isOrbit ? 54 + difficulty.multiplier * 12 : 62 + difficulty.multiplier * 20;
+  const hardUfoSpikeCoverSections = new Set([0.46, 0.62].map((progress) => Math.round((levelLength * progress - 920) / spacing)));
 
   for (let x = 920; x < levelLength - 900; x += spacing) {
+    const section = Math.round((x - 920) / spacing);
     const splitGap = choice.difficulty === 'hard' ? 248 : choice.difficulty === 'medium' ? 270 : 296;
     const flipGap = choice.difficulty === 'hard' ? 176 : choice.difficulty === 'medium' ? 202 : 230;
     const orbitGap = choice.difficulty === 'hard' ? 182 : choice.difficulty === 'medium' ? 210 : 238;
     const normalGap = Math.max(96, 198 - difficulty.multiplier * 44 - random() * 26);
-    const gap = splitMode ? splitGap : isFlipWave ? flipGap : isOrbit ? orbitGap : normalGap;
+    const hardUfoEase = choice.mode === 'ufo' && choice.difficulty === 'hard';
+    const ufoGap = normalGap + (hardUfoEase ? 34 : 24);
+    const gap = splitMode ? splitGap : isFlipWave ? flipGap : isOrbit ? orbitGap : choice.mode === 'ufo' ? ufoGap : normalGap;
     const splitWave = Math.sin(x / 980) * (choice.difficulty === 'hard' ? 40 : 30);
     const centerWave = splitMode
       ? splitWave
@@ -1174,12 +1177,18 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       }
     }
 
-    if (!splitMode && !isFlipWave && !isOrbit && choice.difficulty !== 'easy' && random() > 0.42) {
+    const skipHardUfoSpikeCover =
+      choice.mode === 'ufo' && choice.difficulty === 'hard' && hardUfoSpikeCoverSections.has(section);
+    const centerBlockEligible = !splitMode && !isFlipWave && !isOrbit && choice.difficulty !== 'easy';
+    const shouldAddCenterBlock = centerBlockEligible ? random() > (hardUfoEase ? 0.54 : 0.42) : false;
+    const centerBlockY = shouldAddCenterBlock ? 170 + random() * 190 : 0;
+    const centerBlockHeight = shouldAddCenterBlock ? 46 + random() * 50 : 0;
+    if (centerBlockEligible && !skipHardUfoSpikeCover && shouldAddCenterBlock) {
       obstacles.push({
         x: x + spacing * 0.52,
-        y: 170 + random() * 190,
+        y: centerBlockY,
         width: width * 0.82,
-        height: 46 + random() * 50,
+        height: centerBlockHeight,
         color: '#3d2c8d',
       });
     }
@@ -1204,7 +1213,7 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       });
     }
 
-    if (random() > (splitMode ? 0.62 : isFlipWave || isOrbit ? 0.72 : 0.38)) {
+    if (random() > (splitMode ? 0.62 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38)) {
       const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
       obstacles.push({
         kind: 'saw',
@@ -1241,7 +1250,7 @@ function buildTutorialLevel(mode: Mode): Level {
     laser: 238,
     orbit: 270,
     ship: 265,
-    ufo: 286,
+    ufo: 310,
   };
   const centersByMode: Record<Mode, number[]> = {
     wave: [270, 218, 322, 236, 302, 258, 332],
@@ -1340,7 +1349,7 @@ function buildFallbackInfiniteSegment(choice: Choice, _speedMode: SpeedMode, fro
               ? 162
               : choice.mode === 'wave'
                 ? 148
-                : 184;
+                : 208;
     const width = choice.mode === 'laser' ? 92 : choice.mode === 'orbit' ? 58 : 66;
     const topHeight = Math.max(54, center - gap / 2);
     const bottomY = Math.min(HEIGHT - 78, center + gap / 2);
@@ -1480,7 +1489,9 @@ function touchesLevelBounds(player: Player, mode: Mode) {
 }
 
 function getCircularHitboxRadius(mode: Mode) {
-  return mode === 'orbit' ? 18 : 20;
+  if (mode === 'orbit') return 18;
+  if (mode === 'ufo') return 18;
+  return 20;
 }
 
 function rotateAroundPlayer(player: Player, x: number, y: number) {
@@ -2562,9 +2573,9 @@ function updatePlayer(
 
   if (mode === 'ufo') {
     if (ufoJumpQueued) {
-      next.vy = -360 * gravityDirection;
+      next.vy = -315 * gravityDirection;
     }
-    next.vy += 760 * gravityDirection * dt;
+    next.vy += 900 * gravityDirection * dt;
     next.vy = clamp(next.vy, -430, 500);
     next.y += next.vy * dt;
     next.angle += 2.8 * dt;
@@ -2633,7 +2644,7 @@ export default function App() {
   const shadowTeleportsLeftRef = useRef(5);
   const shadowCooldownUntilRef = useRef(0);
   const checkpointsRef = useRef<PracticeCheckpoint[]>([]);
-  const lastCheckpointAtRef = useRef(-PRACTICE_CHECKPOINT_COOLDOWN_MS);
+  const lastCheckpointAtRef = useRef(0);
   const nextAutoCheckpointAtRef = useRef(PRACTICE_AUTO_CHECKPOINT_MS);
   const practiceRespawnUntilRef = useRef(0);
   const deathAnimationRef = useRef<DeathAnimation | null>(null);
@@ -2658,7 +2669,7 @@ export default function App() {
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
   const [lastResult, setLastResult] = useState<
-    { progress: number; completed: boolean; infinite?: boolean; tutorialMode?: boolean; mode?: Mode } | null
+    { progress: number; completed: boolean; attempts: number; infinite?: boolean; tutorialMode?: boolean; mode?: Mode } | null
   >(null);
   const [modePickerOpen, setModePickerOpen] = useState(false);
   const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
@@ -3067,6 +3078,7 @@ export default function App() {
       setLastResult({
         progress: Math.round(infiniteMode ? progress : completed ? 100 : progress),
         completed,
+        attempts: attemptRef.current,
         infinite: infiniteMode,
         tutorialMode,
         mode: choice.mode,
@@ -3167,9 +3179,8 @@ export default function App() {
     setScreen('paused');
   };
 
-  const addPracticeCheckpoint = (force = false) => {
+  const addPracticeCheckpoint = () => {
     if (!practiceMode || screen !== 'playing') return false;
-    if (!force && elapsedRef.current - lastCheckpointAtRef.current < PRACTICE_CHECKPOINT_COOLDOWN_MS) return false;
     const cameraX = (elapsedRef.current / 1000) * level.speed;
     const player = playerRef.current;
     const splitPlayer = modifications.splitMode ? splitPlayerRef.current : null;
@@ -3263,7 +3274,7 @@ export default function App() {
     ufoJumpQueuedRef.current = false;
     resetRunState();
     checkpointsRef.current = [];
-    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    lastCheckpointAtRef.current = 0;
     nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     practiceRespawnUntilRef.current = 0;
     const playerStartX = getPlayerStartX(modifications.shadow, regularLevel.speed);
@@ -3309,7 +3320,7 @@ export default function App() {
     ufoJumpQueuedRef.current = false;
     resetRunState();
     checkpointsRef.current = [];
-    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    lastCheckpointAtRef.current = 0;
     nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     practiceRespawnUntilRef.current = 0;
     const playerStartX = getPlayerStartX(false, nextLevel.speed);
@@ -3359,7 +3370,7 @@ export default function App() {
     ufoJumpQueuedRef.current = false;
     resetRunState();
     checkpointsRef.current = [];
-    lastCheckpointAtRef.current = -PRACTICE_CHECKPOINT_COOLDOWN_MS;
+    lastCheckpointAtRef.current = 0;
     nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     practiceRespawnUntilRef.current = 0;
     infiniteGeneratingRef.current = false;
@@ -4331,28 +4342,40 @@ export default function App() {
           )}
           {screen === 'playing' && practiceMode && (
             <div className="practice-panel" aria-label="Практика">
-              <button
-                className={checkpointButtonActive ? 'practice-tool active' : 'practice-tool'}
-                onClick={() => {
-                  if (addPracticeCheckpoint()) {
-                    markCheckpointButtonActive();
-                  }
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                title="Поставить чекпоинт"
-                type="button"
-              >
-                <span className="checkpoint-diamond" />
-              </button>
-              <button
-                className="practice-tool"
-                onClick={removePracticeCheckpoint}
-                onPointerDown={(event) => event.stopPropagation()}
-                title="Удалить последний чекпоинт"
-                type="button"
-              >
-                <span className="checkpoint-diamond disabled" />
-              </button>
+              <div className="practice-tool-wrap">
+                <button
+                  className={checkpointButtonActive ? 'practice-tool active' : 'practice-tool'}
+                  onClick={() => {
+                    if (addPracticeCheckpoint()) {
+                      markCheckpointButtonActive();
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.repeat) event.preventDefault();
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  title="Поставить чекпоинт"
+                  type="button"
+                >
+                  <span className="checkpoint-diamond" />
+                </button>
+                <span className="practice-key">C</span>
+              </div>
+              <div className="practice-tool-wrap">
+                <button
+                  className="practice-tool"
+                  onClick={removePracticeCheckpoint}
+                  onKeyDown={(event) => {
+                    if (event.repeat) event.preventDefault();
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  title="Удалить последний чекпоинт"
+                  type="button"
+                >
+                  <span className="checkpoint-diamond disabled" />
+                </button>
+                <span className="practice-key">D</span>
+              </div>
             </div>
           )}
           {screen === 'paused' && (
@@ -4398,6 +4421,9 @@ export default function App() {
             type="button"
           >
             Управление
+          </button>
+          <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
+            Назад
           </button>
 
           <div className="menu-action-row">
@@ -4532,7 +4558,7 @@ export default function App() {
           onClick={() => closeModalWithFade(() => setModePickerOpen(false))}
           role="presentation"
         >
-          <section className="mode-modal" aria-label="Выбор режима" onClick={(event) => event.stopPropagation()}>
+          <section className="mode-modal mode-picker-modal" aria-label="Выбор режима" onClick={(event) => event.stopPropagation()}>
             <div>
               <p className="eyebrow">BeatShift</p>
               <h1>Режимы</h1>
@@ -4889,6 +4915,11 @@ export default function App() {
           <div className="score-row">
             <span>Рекорд</span>
             <strong>{lastResult.infinite ? `${infiniteBest} с` : `${best}%`}</strong>
+          </div>
+
+          <div className="score-row">
+            <span>Попытки</span>
+            <strong>{lastResult.attempts}</strong>
           </div>
 
           <div className="result-actions">
