@@ -2,6 +2,10 @@
 import type { FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
+import neonDriftProtocol from './assets/audio/neon-drift-protocol.mp3';
+import neonDriftProtocolShipMedium from './assets/audio/neon-drift-protocol-ship-medium.mp3';
+import neonDriftProtocolUfoEasy from './assets/audio/neon-drift-protocol-ufo-easy.mp3';
+import neonDriftProtocolUfoMedium from './assets/audio/neon-drift-protocol-ufo-medium.mp3';
 
 type Mode = 'wave' | 'flipWave' | 'laser' | 'orbit' | 'ship' | 'ufo';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -33,10 +37,16 @@ type SoundName =
   | 'respawn'
   | 'win';
 
-type ActiveMusic = {
-  master: GainNode;
-  timers: number[];
-};
+type ActiveMusic =
+  | {
+      kind: 'synth';
+      master: GainNode;
+      timers: number[];
+    }
+  | {
+      kind: 'file';
+      audio: HTMLAudioElement;
+    };
 
 type Choice = {
   mode: Mode;
@@ -2711,6 +2721,13 @@ export default function App() {
     const activeMusic = activeMusicRef.current;
     if (!activeMusic) return;
 
+    if (activeMusic.kind === 'file') {
+      activeMusic.audio.pause();
+      activeMusic.audio.currentTime = 0;
+      activeMusicRef.current = null;
+      return;
+    }
+
     activeMusic.timers.forEach((timer) => window.clearInterval(timer));
     const now = audioContextRef.current?.currentTime ?? 0;
     activeMusic.master.gain.cancelScheduledValues(now);
@@ -2723,6 +2740,31 @@ export default function App() {
   const startSoundtrack = useCallback(
     (trackChoice: Choice, trackSpeedMode: SpeedMode) => {
       stopSoundtrack();
+      const fileTrack =
+        trackChoice.mode === 'ship' && trackChoice.difficulty === 'easy'
+          ? neonDriftProtocol
+          : trackChoice.mode === 'ship' && trackChoice.difficulty === 'medium'
+            ? neonDriftProtocolShipMedium
+            : trackChoice.mode === 'ufo' && trackChoice.difficulty === 'easy'
+              ? neonDriftProtocolUfoEasy
+              : trackChoice.mode === 'ufo' && trackChoice.difficulty === 'medium'
+                ? neonDriftProtocolUfoMedium
+                : null;
+      if (fileTrack) {
+        const speedSettings = SPEED_MODES.find((item) => item.id === trackSpeedMode) ?? SPEED_MODES[0];
+        const audio = new Audio(fileTrack);
+        audio.loop = true;
+        audio.volume = 0.36;
+        audio.playbackRate = speedSettings.multiplier;
+        activeMusicRef.current = { kind: 'file', audio };
+        void audio.play().catch(() => {
+          if (activeMusicRef.current?.kind === 'file' && activeMusicRef.current.audio === audio) {
+            activeMusicRef.current = null;
+          }
+        });
+        return;
+      }
+
       const context = getAudioContext();
       if (!context) return;
 
@@ -2875,9 +2917,33 @@ export default function App() {
 
       scheduleBar();
       const timer = window.setInterval(scheduleBar, beat * 4 * 1000);
-      activeMusicRef.current = { master, timers: [timer] };
+      activeMusicRef.current = { kind: 'synth', master, timers: [timer] };
     },
     [getAudioContext, stopSoundtrack],
+  );
+
+  const syncSoundtrackToElapsed = useCallback(
+    (elapsed: number) => {
+      const activeMusic = activeMusicRef.current;
+      if (!activeMusic) return;
+
+      if (activeMusic.kind === 'file') {
+        const targetSeconds = (elapsed / 1000) * activeMusic.audio.playbackRate;
+        const duration = activeMusic.audio.duration;
+        try {
+          activeMusic.audio.currentTime = Number.isFinite(duration) && duration > 0 ? targetSeconds % duration : targetSeconds;
+          if (activeMusic.audio.paused) {
+            void activeMusic.audio.play().catch(() => undefined);
+          }
+        } catch {
+          // Some browsers reject seeking before metadata is ready.
+        }
+        return;
+      }
+
+      startSoundtrack(choice, speedMode);
+    },
+    [choice, speedMode, startSoundtrack],
   );
 
   const playSound = useCallback((sound: SoundName) => {
@@ -3251,6 +3317,7 @@ export default function App() {
       nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     }
 
+    syncSoundtrackToElapsed(elapsedRef.current);
     lastTimeRef.current = 0;
     practiceRespawnUntilRef.current = performance.now() + PRACTICE_RESPAWN_DELAY_MS;
     playSound('respawn');
@@ -4147,6 +4214,7 @@ export default function App() {
         splitTo: splitShadow ? { x: splitShadow.worldX, y: splitShadow.y } : null,
       };
       elapsedRef.current = shadow.time;
+      syncSoundtrackToElapsed(elapsedRef.current);
       lastTimeRef.current = 0;
       playerRef.current = {
         ...playerRef.current,
@@ -4181,7 +4249,7 @@ export default function App() {
 
     window.addEventListener('keydown', teleportToShadow);
     return () => window.removeEventListener('keydown', teleportToShadow);
-  }, [screen, modifications.shadow, modifications.splitMode, level.speed, playSound]);
+  }, [screen, modifications.shadow, modifications.splitMode, level.speed, playSound, syncSoundtrackToElapsed]);
 
   return (
     <main className={`game-shell ${screen}`}>
