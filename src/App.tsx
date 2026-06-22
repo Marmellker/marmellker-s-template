@@ -2,10 +2,26 @@
 import type { FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
+import chromeFurnaceWaveHard from './assets/audio/chrome-furnace-wave-hard.mp3';
+import chromeFurnaceWaveMedium from './assets/audio/chrome-furnace-wave-medium.mp3';
+import chromeRiftInfinite from './assets/audio/chrome-rift-infinite.mp3';
+import eventHorizonLatticeMenu from './assets/audio/event-horizon-lattice-menu.mp3';
+import glitchArcadeRiftUfoHard from './assets/audio/glitch-arcade-rift-ufo-hard.mp3';
+import neonCircuitRiteLaserEasy from './assets/audio/neon-circuit-rite-laser-easy.mp3';
+import neonCircuitRiteLaserHard from './assets/audio/neon-circuit-rite-laser-hard.mp3';
+import neonCircuitRiteLaserMedium from './assets/audio/neon-circuit-rite-laser-medium.mp3';
+import neonExitVectorShipHard from './assets/audio/neon-exit-vector-ship-hard.mp3';
+import neonFreefallOrbitHard from './assets/audio/neon-freefall-orbit-hard.mp3';
+import neonFreefallOrbitMedium from './assets/audio/neon-freefall-orbit-medium.mp3';
 import neonDriftProtocol from './assets/audio/neon-drift-protocol.mp3';
 import neonDriftProtocolShipMedium from './assets/audio/neon-drift-protocol-ship-medium.mp3';
 import neonDriftProtocolUfoEasy from './assets/audio/neon-drift-protocol-ufo-easy.mp3';
 import neonDriftProtocolUfoMedium from './assets/audio/neon-drift-protocol-ufo-medium.mp3';
+import neonSpikeCircuitFlipWaveEasy from './assets/audio/neon-spike-circuit-flip-wave-easy.mp3';
+import neonSpikeCircuitFlipWaveHard from './assets/audio/neon-spike-circuit-flip-wave-hard.mp3';
+import neonSpikeCircuitFlipWaveMedium from './assets/audio/neon-spike-circuit-flip-wave-medium.mp3';
+import neonSpikeCircuitWaveEasy from './assets/audio/neon-spike-circuit-wave-easy.mp3';
+import orbitCarnivalOrbitEasy from './assets/audio/orbit-carnival-orbit-easy.mp3';
 
 type Mode = 'wave' | 'flipWave' | 'laser' | 'orbit' | 'ship' | 'ufo';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -42,10 +58,12 @@ type ActiveMusic =
       kind: 'synth';
       master: GainNode;
       timers: number[];
+      targetVolume: number;
     }
   | {
       kind: 'file';
       audio: HTMLAudioElement;
+      targetVolume: number;
     };
 
 type Choice = {
@@ -190,6 +208,12 @@ type ModificationSettings = {
   splitMode: boolean;
   shadow: boolean;
   showHitboxes: boolean;
+};
+
+type AudioSettings = {
+  menuMusic: boolean;
+  levelMusic: boolean;
+  soundEffects: boolean;
 };
 
 const MODES: Array<{ id: Mode; title: string; subtitle: string }> = [
@@ -422,6 +446,12 @@ const DEFAULT_MODIFICATIONS: ModificationSettings = {
   showHitboxes: false,
 };
 
+const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
+  menuMusic: true,
+  levelMusic: true,
+  soundEffects: true,
+};
+
 const COLOR_PALETTE: Array<{ title: string; value: string }> = [
   { title: 'Белый', value: '#ffffff' },
   { title: 'Чёрный', value: '#050505' },
@@ -459,6 +489,7 @@ const RECORD_KEY = 'dash-practice-records-v1';
 const INFINITE_RECORD_KEY = 'beatshift-infinite-records-v1';
 const COLORS_KEY = 'dash-practice-colors-v1';
 const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
+const AUDIO_SETTINGS_KEY = 'beatshift-audio-settings-v1';
 const PAUSED_RUN_KEY = 'beatshift-paused-run-v1';
 const WIDTH = 960;
 const HEIGHT = 540;
@@ -470,6 +501,9 @@ const PRACTICE_AUTO_CHECKPOINT_MS = 5_000;
 const PRACTICE_RESPAWN_DELAY_MS = 500;
 const DEATH_ANIMATION_MS = 900;
 const WIN_ANIMATION_MS = 1_000;
+const LEVEL_MUSIC_VOLUME = 0.36;
+const LEVEL_MUSIC_FADE_IN_MS = 650;
+const LEVEL_MUSIC_FADE_OUT_MS = 450;
 const TELEPORT_EFFECT_MS = 520;
 const MODAL_FADE_OUT_MS = 180;
 const PLAYER_MIN_Y = 32;
@@ -701,6 +735,19 @@ function saveModifications(modifications: ModificationSettings) {
   window.localStorage.setItem(MODIFICATIONS_KEY, JSON.stringify(modifications));
 }
 
+function loadAudioSettings(): AudioSettings {
+  try {
+    const saved = window.localStorage.getItem(AUDIO_SETTINGS_KEY);
+    return saved ? { ...DEFAULT_AUDIO_SETTINGS, ...(JSON.parse(saved) as Partial<AudioSettings>) } : DEFAULT_AUDIO_SETTINGS;
+  } catch {
+    return DEFAULT_AUDIO_SETTINGS;
+  }
+}
+
+function saveAudioSettings(settings: AudioSettings) {
+  window.localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify(settings));
+}
+
 function loadPausedRun(): SavedPausedRun | null {
   try {
     const saved = window.sessionStorage.getItem(PAUSED_RUN_KEY);
@@ -734,7 +781,7 @@ function choiceSeed(choice: Choice) {
 function levelDurationByDifficulty(difficulty: Difficulty) {
   if (difficulty === 'easy') return 60_000;
   if (difficulty === 'medium') return 90_000;
-  return 110_000;
+  return 120_000;
 }
 
 function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): Level {
@@ -1120,12 +1167,14 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   const spacing = splitMode ? 560 : isFlipWave ? 520 : isLaser ? 460 : isOrbit ? 500 : choice.mode === 'wave' ? 410 : choice.mode === 'ship' ? 470 : 440;
   const width = splitMode ? 54 + difficulty.multiplier * 12 : isFlipWave || isOrbit ? 54 + difficulty.multiplier * 12 : 62 + difficulty.multiplier * 20;
   const hardUfoSpikeCoverSections = new Set([0.46, 0.62].map((progress) => Math.round((levelLength * progress - 920) / spacing)));
+  const mediumOrbitReworkSection = Math.round((levelLength * 0.32 - 920) / spacing);
 
   for (let x = 920; x < levelLength - 900; x += spacing) {
     const section = Math.round((x - 920) / spacing);
+    const mediumOrbitRework = choice.mode === 'orbit' && choice.difficulty === 'medium' && section === mediumOrbitReworkSection;
     const splitGap = choice.difficulty === 'hard' ? 248 : choice.difficulty === 'medium' ? 270 : 296;
     const flipGap = choice.difficulty === 'hard' ? 176 : choice.difficulty === 'medium' ? 202 : 230;
-    const orbitGap = choice.difficulty === 'hard' ? 182 : choice.difficulty === 'medium' ? 210 : 238;
+    const orbitGap = choice.difficulty === 'hard' ? 182 : choice.difficulty === 'medium' ? (mediumOrbitRework ? 242 : 210) : 238;
     const normalGap = Math.max(96, 198 - difficulty.multiplier * 44 - random() * 26);
     const hardUfoEase = choice.mode === 'ufo' && choice.difficulty === 'hard';
     const ufoGap = normalGap + (hardUfoEase ? 34 : 24);
@@ -1213,37 +1262,51 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       });
     }
 
-    if (!splitMode && isOrbit && choice.difficulty !== 'easy' && random() > 0.58) {
+    const shouldAddOrbitBlock = !splitMode && isOrbit && choice.difficulty !== 'easy' ? random() > 0.58 : false;
+    const orbitBlockX = shouldAddOrbitBlock ? x + spacing * (0.44 + random() * 0.18) : 0;
+    const orbitBlockY = shouldAddOrbitBlock ? 156 + random() * 210 : 0;
+    const orbitBlockHeight = shouldAddOrbitBlock ? 36 + random() * 34 : 0;
+    if (shouldAddOrbitBlock && !mediumOrbitRework) {
       obstacles.push({
-        x: x + spacing * (0.44 + random() * 0.18),
-        y: 156 + random() * 210,
+        x: orbitBlockX,
+        y: orbitBlockY,
         width: width * 0.72,
-        height: 36 + random() * 34,
+        height: orbitBlockHeight,
         color: '#3d2c8d',
       });
     }
 
-    if (random() > (splitMode ? 0.62 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38)) {
+    const shouldAddSaw = random() > (splitMode ? 0.62 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
+    if (shouldAddSaw) {
       const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
-      obstacles.push({
-        kind: 'saw',
-        x: x + spacing * (0.46 + random() * 0.22),
-        y: splitMode ? 190 + random() * 130 : isFlipWave || isOrbit ? 158 + random() * 210 : 128 + random() * 260,
-        width: sawSize,
-        height: sawSize,
-        color: '#d9e2ec',
-      });
+      const sawX = x + spacing * (0.46 + random() * 0.22);
+      const sawY = splitMode ? 190 + random() * 130 : isFlipWave || isOrbit ? 158 + random() * 210 : 128 + random() * 260;
+      if (!mediumOrbitRework) {
+        obstacles.push({
+          kind: 'saw',
+          x: sawX,
+          y: sawY,
+          width: sawSize,
+          height: sawSize,
+          color: '#d9e2ec',
+        });
+      }
     }
 
-    if (random() > (splitMode ? 0.78 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48)) {
-      obstacles.push({
-        kind: 'spikedBlock',
-        x: x + spacing * (0.3 + random() * 0.35),
-        y: splitMode ? 218 + random() * 80 : isFlipWave || isOrbit ? 164 + random() * 190 : 132 + random() * 230,
-        width: splitMode ? 42 : isFlipWave || isOrbit ? 42 + difficulty.multiplier * 6 : 52 + difficulty.multiplier * 8,
-        height: splitMode ? 42 : isFlipWave || isOrbit ? 40 + difficulty.multiplier * 6 : 46 + difficulty.multiplier * 8,
-        color: '#6842c2',
-      });
+    const shouldAddSpikedBlock = random() > (splitMode ? 0.78 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
+    if (shouldAddSpikedBlock) {
+      const spikedBlockX = x + spacing * (0.3 + random() * 0.35);
+      const spikedBlockY = splitMode ? 218 + random() * 80 : isFlipWave || isOrbit ? 164 + random() * 190 : 132 + random() * 230;
+      if (!mediumOrbitRework) {
+        obstacles.push({
+          kind: 'spikedBlock',
+          x: spikedBlockX,
+          y: spikedBlockY,
+          width: splitMode ? 42 : isFlipWave || isOrbit ? 42 + difficulty.multiplier * 6 : 52 + difficulty.multiplier * 8,
+          height: splitMode ? 42 : isFlipWave || isOrbit ? 40 + difficulty.multiplier * 6 : 46 + difficulty.multiplier * 8,
+          color: '#6842c2',
+        });
+      }
     }
   }
 
@@ -2657,11 +2720,13 @@ export default function App() {
   const lastCheckpointAtRef = useRef(0);
   const nextAutoCheckpointAtRef = useRef(PRACTICE_AUTO_CHECKPOINT_MS);
   const practiceRespawnUntilRef = useRef(0);
+  const practiceRespawnMusicPendingRef = useRef(false);
   const deathAnimationRef = useRef<DeathAnimation | null>(null);
   const winAnimationRef = useRef<WinAnimation | null>(null);
   const teleportEffectRef = useRef<TeleportEffect | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeMusicRef = useRef<ActiveMusic | null>(null);
+  const menuMusicRef = useRef<HTMLAudioElement | null>(null);
   const infiniteGeneratingRef = useRef(false);
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
   const [homePreview, setHomePreview] = useState<HomePreview>(() => createHomePreview());
@@ -2678,6 +2743,7 @@ export default function App() {
   const [infiniteRecords, setInfiniteRecords] = useState<RecordMap>(() => loadInfiniteRecords());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => loadAudioSettings());
   const [lastResult, setLastResult] = useState<
     { progress: number; completed: boolean; attempts: number; infinite?: boolean; tutorialMode?: boolean; mode?: Mode } | null
   >(null);
@@ -2685,6 +2751,7 @@ export default function App() {
   const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
   const [difficultyPickerOpen, setDifficultyPickerOpen] = useState(false);
   const [controlsPickerOpen, setControlsPickerOpen] = useState(false);
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const [menuAnimationDisabled, setMenuAnimationDisabled] = useState(false);
   const [modalClosing, setModalClosing] = useState(false);
   const [checkpointButtonActive, setCheckpointButtonActive] = useState(false);
@@ -2717,14 +2784,72 @@ export default function App() {
     return context;
   }, []);
 
+  const stopMenuMusic = useCallback(() => {
+    const menuMusic = menuMusicRef.current;
+    if (!menuMusic) return;
+
+    menuMusic.pause();
+    menuMusicRef.current = null;
+  }, []);
+
+  const startMenuMusic = useCallback(() => {
+    const currentMusic = menuMusicRef.current;
+    if (currentMusic) {
+      if (currentMusic.paused) {
+        void currentMusic.play().catch(() => undefined);
+      }
+      return;
+    }
+
+    const audio = new Audio(eventHorizonLatticeMenu);
+    audio.loop = true;
+    audio.volume = 0.28;
+    menuMusicRef.current = audio;
+    void audio.play().catch(() => {
+      if (menuMusicRef.current === audio) {
+        menuMusicRef.current = null;
+      }
+    });
+  }, []);
+
+  const fadeFileAudio = (audio: HTMLAudioElement, toVolume: number, durationMs: number, afterFade?: () => void) => {
+    const fromVolume = audio.volume;
+    const startedAt = performance.now();
+
+    const step = () => {
+      const progress = clamp((performance.now() - startedAt) / durationMs, 0, 1);
+      audio.volume = fromVolume + (toVolume - fromVolume) * progress;
+      if (progress < 1) {
+        window.requestAnimationFrame(step);
+        return;
+      }
+      afterFade?.();
+    };
+
+    step();
+  };
+
+  const seekFileAudioToElapsed = (audio: HTMLAudioElement, elapsed: number) => {
+    const targetSeconds = (elapsed / 1000) * audio.playbackRate;
+    const duration = audio.duration;
+    try {
+      audio.currentTime = Number.isFinite(duration) && duration > 0 ? targetSeconds % duration : targetSeconds;
+    } catch {
+      // Some browsers reject seeking before metadata is ready.
+    }
+  };
+
   const stopSoundtrack = useCallback(() => {
     const activeMusic = activeMusicRef.current;
     if (!activeMusic) return;
 
     if (activeMusic.kind === 'file') {
-      activeMusic.audio.pause();
-      activeMusic.audio.currentTime = 0;
+      const audio = activeMusic.audio;
       activeMusicRef.current = null;
+      fadeFileAudio(audio, 0, LEVEL_MUSIC_FADE_OUT_MS, () => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
       return;
     }
 
@@ -2732,36 +2857,82 @@ export default function App() {
     const now = audioContextRef.current?.currentTime ?? 0;
     activeMusic.master.gain.cancelScheduledValues(now);
     activeMusic.master.gain.setValueAtTime(Math.max(0.0001, activeMusic.master.gain.value), now);
-    activeMusic.master.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-    window.setTimeout(() => activeMusic.master.disconnect(), 240);
+    activeMusic.master.gain.exponentialRampToValueAtTime(0.0001, now + LEVEL_MUSIC_FADE_OUT_MS / 1000);
+    window.setTimeout(() => activeMusic.master.disconnect(), LEVEL_MUSIC_FADE_OUT_MS + 80);
     activeMusicRef.current = null;
   }, []);
 
   const startSoundtrack = useCallback(
-    (trackChoice: Choice, trackSpeedMode: SpeedMode) => {
+    (
+      trackChoice: Choice,
+      trackSpeedMode: SpeedMode,
+      options: { fadeIn?: boolean; infinite?: boolean; startElapsed?: number; paused?: boolean } = {},
+    ) => {
       stopSoundtrack();
-      const fileTrack =
-        trackChoice.mode === 'ship' && trackChoice.difficulty === 'easy'
+      const fadeIn = options.fadeIn ?? true;
+      const fileTrack = options.infinite
+        ? chromeRiftInfinite
+        : trackChoice.mode === 'ship' && trackChoice.difficulty === 'easy'
           ? neonDriftProtocol
           : trackChoice.mode === 'ship' && trackChoice.difficulty === 'medium'
             ? neonDriftProtocolShipMedium
+            : trackChoice.mode === 'ship' && trackChoice.difficulty === 'hard'
+            ? neonExitVectorShipHard
             : trackChoice.mode === 'ufo' && trackChoice.difficulty === 'easy'
               ? neonDriftProtocolUfoEasy
               : trackChoice.mode === 'ufo' && trackChoice.difficulty === 'medium'
                 ? neonDriftProtocolUfoMedium
-                : null;
+                : trackChoice.mode === 'ufo' && trackChoice.difficulty === 'hard'
+                  ? glitchArcadeRiftUfoHard
+                  : trackChoice.mode === 'orbit' && trackChoice.difficulty === 'easy'
+                    ? orbitCarnivalOrbitEasy
+                    : trackChoice.mode === 'orbit' && trackChoice.difficulty === 'medium'
+                      ? neonFreefallOrbitMedium
+                      : trackChoice.mode === 'orbit' && trackChoice.difficulty === 'hard'
+                        ? neonFreefallOrbitHard
+                        : trackChoice.mode === 'laser' && trackChoice.difficulty === 'easy'
+                          ? neonCircuitRiteLaserEasy
+                          : trackChoice.mode === 'laser' && trackChoice.difficulty === 'medium'
+                            ? neonCircuitRiteLaserMedium
+                            : trackChoice.mode === 'laser' && trackChoice.difficulty === 'hard'
+                              ? neonCircuitRiteLaserHard
+                              : trackChoice.mode === 'wave' && trackChoice.difficulty === 'easy'
+                                ? neonSpikeCircuitWaveEasy
+                                : trackChoice.mode === 'wave' && trackChoice.difficulty === 'medium'
+                                  ? chromeFurnaceWaveMedium
+                                  : trackChoice.mode === 'wave' && trackChoice.difficulty === 'hard'
+                                    ? chromeFurnaceWaveHard
+                                    : trackChoice.mode === 'flipWave' && trackChoice.difficulty === 'easy'
+                                      ? neonSpikeCircuitFlipWaveEasy
+                                      : trackChoice.mode === 'flipWave' && trackChoice.difficulty === 'medium'
+                                        ? neonSpikeCircuitFlipWaveMedium
+                                        : trackChoice.mode === 'flipWave' && trackChoice.difficulty === 'hard'
+                                          ? neonSpikeCircuitFlipWaveHard
+                                          : null;
       if (fileTrack) {
         const speedSettings = SPEED_MODES.find((item) => item.id === trackSpeedMode) ?? SPEED_MODES[0];
         const audio = new Audio(fileTrack);
         audio.loop = true;
-        audio.volume = 0.36;
+        audio.volume = fadeIn ? 0 : LEVEL_MUSIC_VOLUME;
         audio.playbackRate = speedSettings.multiplier;
-        activeMusicRef.current = { kind: 'file', audio };
-        void audio.play().catch(() => {
-          if (activeMusicRef.current?.kind === 'file' && activeMusicRef.current.audio === audio) {
-            activeMusicRef.current = null;
-          }
-        });
+        if (typeof options.startElapsed === 'number') {
+          seekFileAudioToElapsed(audio, options.startElapsed);
+          audio.addEventListener('loadedmetadata', () => seekFileAudioToElapsed(audio, options.startElapsed ?? 0), {
+            once: true,
+          });
+        }
+        activeMusicRef.current = { kind: 'file', audio, targetVolume: LEVEL_MUSIC_VOLUME };
+        if (!options.paused) {
+          void audio.play().then(() => {
+            if (fadeIn && activeMusicRef.current?.kind === 'file' && activeMusicRef.current.audio === audio) {
+              fadeFileAudio(audio, LEVEL_MUSIC_VOLUME, LEVEL_MUSIC_FADE_IN_MS);
+            }
+          }).catch(() => {
+            if (activeMusicRef.current?.kind === 'file' && activeMusicRef.current.audio === audio) {
+              activeMusicRef.current = null;
+            }
+          });
+        }
         return;
       }
 
@@ -2805,8 +2976,11 @@ export default function App() {
       const filter = context.createBiquadFilter();
       const compressor = context.createDynamicsCompressor();
 
-      master.gain.setValueAtTime(0.0001, context.currentTime);
-      master.gain.exponentialRampToValueAtTime(trackChoice.difficulty === 'hard' ? 0.058 : 0.048, context.currentTime + 0.24);
+      const targetVolume = trackChoice.difficulty === 'hard' ? 0.058 : 0.048;
+      master.gain.setValueAtTime(fadeIn ? 0.0001 : targetVolume, context.currentTime);
+      if (fadeIn) {
+        master.gain.exponentialRampToValueAtTime(targetVolume, context.currentTime + LEVEL_MUSIC_FADE_IN_MS / 1000);
+      }
       filter.type = 'lowpass';
       filter.frequency.setValueAtTime(trackChoice.difficulty === 'hard' ? 7600 : 6400, context.currentTime);
       master.connect(filter);
@@ -2917,36 +3091,42 @@ export default function App() {
 
       scheduleBar();
       const timer = window.setInterval(scheduleBar, beat * 4 * 1000);
-      activeMusicRef.current = { kind: 'synth', master, timers: [timer] };
+      activeMusicRef.current = { kind: 'synth', master, timers: [timer], targetVolume };
     },
     [getAudioContext, stopSoundtrack],
   );
 
   const syncSoundtrackToElapsed = useCallback(
-    (elapsed: number) => {
+    (elapsed: number, options: { fadeIn?: boolean; pauseAfterSeek?: boolean } = {}) => {
       const activeMusic = activeMusicRef.current;
-      if (!activeMusic) return;
+      if (!activeMusic) {
+        startSoundtrack(choice, speedMode, {
+          fadeIn: options.fadeIn ?? false,
+          paused: options.pauseAfterSeek,
+          startElapsed: elapsed,
+        });
+        return;
+      }
 
       if (activeMusic.kind === 'file') {
-        const targetSeconds = (elapsed / 1000) * activeMusic.audio.playbackRate;
-        const duration = activeMusic.audio.duration;
-        try {
-          activeMusic.audio.currentTime = Number.isFinite(duration) && duration > 0 ? targetSeconds % duration : targetSeconds;
-          if (activeMusic.audio.paused) {
-            void activeMusic.audio.play().catch(() => undefined);
-          }
-        } catch {
-          // Some browsers reject seeking before metadata is ready.
+        seekFileAudioToElapsed(activeMusic.audio, elapsed);
+        if (options.pauseAfterSeek) {
+          activeMusic.audio.pause();
+        } else if (activeMusic.audio.paused) {
+          activeMusic.audio.volume = activeMusic.targetVolume;
+          void activeMusic.audio.play().catch(() => undefined);
         }
         return;
       }
 
-      startSoundtrack(choice, speedMode);
+      startSoundtrack(choice, speedMode, { fadeIn: options.fadeIn ?? false, startElapsed: elapsed });
     },
     [choice, speedMode, startSoundtrack],
   );
 
   const playSound = useCallback((sound: SoundName) => {
+    if (!audioSettings.soundEffects) return;
+
     const context = getAudioContext();
     if (!context) return;
 
@@ -3035,7 +3215,7 @@ export default function App() {
       playNoise(0.03, 0.06, 0.12);
       playNoise(0.28, 0.08, 0.1);
     }
-  }, []);
+  }, [audioSettings.soundEffects, getAudioContext]);
 
   const openAuth = (mode: AuthMode) => {
     playSound('click');
@@ -3168,6 +3348,7 @@ export default function App() {
     shadowCooldownUntilRef.current = 0;
     winAnimationRef.current = null;
     teleportEffectRef.current = null;
+    practiceRespawnMusicPendingRef.current = false;
   };
 
   const saveCurrentRun = () => {
@@ -3317,7 +3498,12 @@ export default function App() {
       nextAutoCheckpointAtRef.current = PRACTICE_AUTO_CHECKPOINT_MS;
     }
 
-    syncSoundtrackToElapsed(elapsedRef.current);
+    if (audioSettings.levelMusic) {
+      syncSoundtrackToElapsed(elapsedRef.current, { fadeIn: false, pauseAfterSeek: true });
+      practiceRespawnMusicPendingRef.current = true;
+    } else {
+      practiceRespawnMusicPendingRef.current = false;
+    }
     lastTimeRef.current = 0;
     practiceRespawnUntilRef.current = performance.now() + PRACTICE_RESPAWN_DELAY_MS;
     playSound('respawn');
@@ -3605,15 +3791,35 @@ export default function App() {
     });
   };
 
+  const toggleAudioSetting = (setting: keyof AudioSettings) => {
+    playSound('toggle');
+    setAudioSettings((current) => {
+      const next = { ...current, [setting]: !current[setting] };
+      saveAudioSettings(next);
+      return next;
+    });
+  };
+
   useEffect(() => {
-    if (screen !== 'playing') {
+    if (screen === 'playing' || screen === 'paused' || !audioSettings.menuMusic) {
+      stopMenuMusic();
+      return;
+    }
+
+    startMenuMusic();
+  }, [audioSettings.menuMusic, screen, startMenuMusic, stopMenuMusic]);
+
+  useEffect(() => () => stopMenuMusic(), [stopMenuMusic]);
+
+  useEffect(() => {
+    if (screen !== 'playing' || !audioSettings.levelMusic) {
       stopSoundtrack();
       return;
     }
 
-    startSoundtrack(choice, speedMode);
+    startSoundtrack(choice, speedMode, { infinite: infiniteMode });
     return () => stopSoundtrack();
-  }, [choice, screen, speedMode, startSoundtrack, stopSoundtrack]);
+  }, [audioSettings.levelMusic, choice, infiniteMode, screen, speedMode, startSoundtrack, stopSoundtrack]);
 
   useEffect(() => {
     if (screen !== 'playing') return;
@@ -3740,6 +3946,10 @@ export default function App() {
         return;
       }
       practiceRespawnUntilRef.current = 0;
+      if (practiceRespawnMusicPendingRef.current) {
+        syncSoundtrackToElapsed(elapsedRef.current, { fadeIn: false });
+        practiceRespawnMusicPendingRef.current = false;
+      }
       const lastTime = lastTimeRef.current || time;
       const dt = Math.min((time - lastTime) / 1000, 0.032);
       lastTimeRef.current = time;
@@ -3871,6 +4081,7 @@ export default function App() {
       );
 
       if (hit) {
+        stopSoundtrack();
         playSound('death');
         deathAnimationRef.current = {
           startedAt: time,
@@ -3886,6 +4097,7 @@ export default function App() {
       }
 
       if (!level.infinite && elapsedRef.current >= level.duration) {
+        stopSoundtrack();
         playSound('win');
         winAnimationRef.current = {
           startedAt: time,
@@ -3906,7 +4118,7 @@ export default function App() {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [choice, colors, finishRun, level, modifications, playSound, practiceMode, screen]);
+  }, [choice, colors, finishRun, level, modifications, playSound, practiceMode, screen, stopSoundtrack]);
 
   useEffect(() => {
     const saved = loadPausedRun();
@@ -4253,6 +4465,56 @@ export default function App() {
 
   return (
     <main className={`game-shell ${screen}`}>
+      {audioSettingsOpen && (
+        <div
+          className={modalClosing ? 'modal-backdrop audio-settings-backdrop modal-closing' : 'modal-backdrop audio-settings-backdrop'}
+          onClick={() => closeModalWithFade(() => setAudioSettingsOpen(false))}
+          role="presentation"
+        >
+          <section
+            aria-label="Настройки звука"
+            className="mode-modal audio-settings-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Звук</h1>
+            </div>
+
+            <div className="audio-settings-list">
+              <button
+                className={audioSettings.menuMusic ? 'audio-setting active' : 'audio-setting'}
+                onClick={() => toggleAudioSetting('menuMusic')}
+                type="button"
+              >
+                <span>Музыка в меню</span>
+                <small>{audioSettings.menuMusic ? 'Включено' : 'Выключено'}</small>
+              </button>
+              <button
+                className={audioSettings.levelMusic ? 'audio-setting active' : 'audio-setting'}
+                onClick={() => toggleAudioSetting('levelMusic')}
+                type="button"
+              >
+                <span>Музыка в уровнях</span>
+                <small>{audioSettings.levelMusic ? 'Включено' : 'Выключено'}</small>
+              </button>
+              <button
+                className={audioSettings.soundEffects ? 'audio-setting active' : 'audio-setting'}
+                onClick={() => toggleAudioSetting('soundEffects')}
+                type="button"
+              >
+                <span>Звуковые эффекты</span>
+                <small>{audioSettings.soundEffects ? 'Включено' : 'Выключено'}</small>
+              </button>
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(() => setAudioSettingsOpen(false))} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
       {screen === 'home' && (
         <>
           <section
@@ -4277,7 +4539,7 @@ export default function App() {
 
           <section className={authMode ? 'home-auth home-panel-blurred' : 'home-auth'} aria-label="Главный экран">
             <div>
-              <p className="eyebrow">BeatShift</p>
+              <p className="eyebrow home-title">BeatShift</p>
               <h1>Выбери вход</h1>
             </div>
             <div className="home-auth-actions">
@@ -4489,6 +4751,20 @@ export default function App() {
             type="button"
           >
             Управление
+          </button>
+          <button
+            aria-label="Настройки звука"
+            className={audioSettingsOpen ? 'menu-button audio-settings-button active' : 'menu-button audio-settings-button'}
+            onClick={() => {
+              setAudioSettingsOpen(true);
+              if (audioSettings.menuMusic) {
+                startMenuMusic();
+              }
+            }}
+            title="Настройки звука"
+            type="button"
+          >
+            ♪
           </button>
           <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
             Назад
