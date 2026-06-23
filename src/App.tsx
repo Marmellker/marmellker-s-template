@@ -1680,10 +1680,6 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       color: x % (spacing * 2) < spacing ? '#243b53' : '#7c314f',
     });
 
-    if (choice.mode === 'ufo' && random() > 0.38) {
-      orbs.push({ x: x + spacing * 0.45, y: 150 + random() * 240, radius: 14 });
-    }
-
     if (!mediumOrbitRelief && random() > (splitMode ? 0.66 : isFlipWave || isOrbit ? 0.68 : choice.difficulty === 'easy' ? 0.48 : 0.26)) {
       const spikeCount = choice.difficulty === 'hard' ? 4 : choice.difficulty === 'medium' ? 3 : 2;
       const spikeHeight = splitMode ? 26 + difficulty.multiplier * 6 : 32 + difficulty.multiplier * 10;
@@ -1852,9 +1848,6 @@ function buildTutorialLevel(mode: Mode): Level {
       });
     }
 
-    if (mode === 'ufo') {
-      orbs.push({ x: x + spacing * 0.46, y: center - 28, radius: 14 });
-    }
   }
 
   return {
@@ -1989,9 +1982,6 @@ function buildFallbackInfiniteSegment(choice: Choice, _speedMode: SpeedMode, fro
       });
     }
 
-    if (choice.mode === 'ufo' && random() > 0.35) {
-      orbs.push({ x: x + spacing * 0.42, y: clamp(center, PLAYER_MIN_Y + 48, PLAYER_MAX_Y - 48), radius: 14 });
-    }
   }
 
   return { obstacles, orbs };
@@ -2040,7 +2030,7 @@ function createInfiniteLevel(choice: Choice, speedMode: SpeedMode, firstSegment:
     duration: INFINITE_DURATION,
     speed: baseLevel.speed,
     obstacles: firstSegment.obstacles,
-    orbs: choice.mode === 'ufo' ? firstSegment.orbs : [],
+    orbs: [],
     infinite: true,
     generatedUntil: 900 + INFINITE_SEGMENT_LENGTH,
   };
@@ -5091,7 +5081,6 @@ export default function App() {
                 ],
                 orbs: [
                   ...current.orbs.filter((orb) => orb.x + orb.radius >= keepFrom),
-                  ...(choice.mode === 'ufo' ? segment.orbs : []),
                 ],
               };
             });
