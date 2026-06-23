@@ -4749,6 +4749,47 @@ export default function App() {
     setScreen('playing');
   };
 
+  const openFullscreen = () => {
+    playSound('click');
+    const target = stageRef.current ?? document.documentElement;
+    const fullscreenTarget = target as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+      msRequestFullscreen?: () => Promise<void> | void;
+    };
+    const documentTarget = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+      msRequestFullscreen?: () => Promise<void> | void;
+    };
+
+    const request =
+      fullscreenTarget.requestFullscreen ??
+      fullscreenTarget.webkitRequestFullscreen ??
+      fullscreenTarget.msRequestFullscreen;
+    const fallbackRequest =
+      documentTarget.requestFullscreen ??
+      documentTarget.webkitRequestFullscreen ??
+      documentTarget.msRequestFullscreen;
+
+    try {
+      const result = request ? request.call(fullscreenTarget) : fallbackRequest?.call(documentTarget);
+      if (result && typeof result.catch === 'function') {
+        void result.catch(() => {
+          try {
+            void fallbackRequest?.call(documentTarget);
+          } catch {
+            // Some mobile browsers only allow fullscreen for video elements.
+          }
+        });
+      }
+    } catch {
+      try {
+        void fallbackRequest?.call(documentTarget);
+      } catch {
+        // Fullscreen is not available in this browser.
+      }
+    }
+  };
+
   const returnToMenu = () => {
     playSound('click');
     const targetScreen: Screen = tutorialMode || lastResult?.tutorialMode ? 'tutorialSelect' : 'menu';
@@ -5896,6 +5937,9 @@ export default function App() {
               Пауза
             </button>
           )}
+          <button className="fullscreen-button" aria-label="Открыть во весь экран" onClick={openFullscreen} type="button">
+            ⛶
+          </button>
           {screen === 'playing' && practiceMode && (
             <div className="practice-panel" aria-label="Практика">
               <div className="practice-tool-wrap">
