@@ -92,7 +92,9 @@ button {
 .game-shell.mods,
 .game-shell.records,
 .game-shell.infiniteRecords,
-.game-shell.leaderboard {
+.game-shell.leaderboard,
+.game-shell.rank,
+.game-shell.quests {
   grid-template-columns: minmax(300px, 560px);
   justify-content: center;
 }
@@ -1157,6 +1159,10 @@ h1 {
   grid-column: 3;
 }
 
+.menu-action-row .compact-menu-pair {
+  grid-column: 4;
+}
+
 .leaderboard-menu-button {
   width: 100%;
   min-height: 76px;
@@ -1207,6 +1213,56 @@ h1 {
 
 .podium-icon span:nth-child(3) {
   height: 27px;
+}
+
+.compact-menu-pair {
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-menu-button {
+  min-width: 0;
+  min-height: 76px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 5px;
+  padding: 8px 6px;
+  background: rgba(13, 18, 31, 0.72);
+  backdrop-filter: blur(12px);
+  font-size: 9px;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.compact-menu-button > span:last-child {
+  max-width: 100%;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.rank-icon,
+.task-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 50%;
+  background: rgba(57, 208, 255, 0.14);
+  color: var(--good);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 14px rgba(57, 208, 255, 0.2);
+}
+
+.task-icon {
+  color: #07101d;
+  background: linear-gradient(135deg, #7df9c2, #facc15);
 }
 
 .menu-action-row .mode-trigger span {
@@ -1272,7 +1328,9 @@ h1 {
 .modal-backdrop.modal-closing .mods-panel,
 .modal-backdrop.modal-closing .records-panel,
 .modal-backdrop.modal-closing .infinite-records-panel,
-.modal-backdrop.modal-closing .leaderboard-panel {
+.modal-backdrop.modal-closing .leaderboard-panel,
+.modal-backdrop.modal-closing .rank-panel,
+.modal-backdrop.modal-closing .quests-panel {
   animation: modalPopOut 180ms ease both;
 }
 
@@ -1643,6 +1701,14 @@ h1 {
   animation: modalPopIn 220ms ease both;
 }
 
+.rank-panel,
+.quests-panel {
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  animation: modalPopIn 220ms ease both;
+}
+
 .leaderboard-panel {
   width: min(760px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
@@ -1761,10 +1827,213 @@ h1 {
   font-weight: 900;
 }
 
+.rank-summary {
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(125, 249, 194, 0.34);
+  border-radius: 8px;
+  background: rgba(125, 249, 194, 0.09);
+}
+
+.rank-summary .rank-icon {
+  width: 46px;
+  height: 46px;
+  font-size: 24px;
+}
+
+.rank-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.rank-summary span {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.rank-summary strong {
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.rank-list,
+.quest-list {
+  display: grid;
+  gap: 10px;
+}
+
+.rank-row {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+}
+
+.rank-row.active {
+  border-color: rgba(57, 208, 255, 0.58);
+  background: rgba(57, 208, 255, 0.12);
+}
+
+.rank-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.rank-row .rank-icon {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  color: var(--good);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.rank-row strong {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.quest-card {
+  display: grid;
+  gap: 8px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+}
+
+.quest-card.completed {
+  border-color: rgba(125, 249, 194, 0.52);
+  background: rgba(125, 249, 194, 0.1);
+}
+
+.quest-card header,
+.quest-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quest-card header span,
+.quest-card p,
+.quest-progress span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.quest-card header strong,
+.quest-progress strong {
+  color: var(--good);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.quest-card h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.quests-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.quest-refresh-timer {
+  min-width: 126px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  padding-top: 4px;
+}
+
+.quest-refresh-timer span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.quest-refresh-timer strong {
+  color: var(--good);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .leaderboard-mode-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.leaderboard-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.leaderboard-choice {
+  min-height: 132px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: center;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.leaderboard-choice:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.leaderboard-choice strong {
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.leaderboard-choice .rank-icon {
+  width: 54px;
+  height: 54px;
+  font-size: 28px;
 }
 
 .leaderboard-mode {
@@ -1821,6 +2090,10 @@ h1 {
   color: var(--good);
   font-size: 18px;
   font-weight: 900;
+}
+
+.rank-leaderboard-row strong {
+  font-size: 15px;
 }
 
 .leaderboard-empty {
@@ -2058,7 +2331,8 @@ h1 {
   }
 
   .menu-action-row .practice-menu-button,
-  .menu-action-row .leaderboard-menu-button {
+  .menu-action-row .leaderboard-menu-button,
+  .menu-action-row .compact-menu-pair {
     grid-column: auto;
   }
 
@@ -2093,7 +2367,9 @@ h1 {
   .mods-panel,
   .records-panel,
   .infinite-records-panel,
-  .leaderboard-panel {
+  .leaderboard-panel,
+  .rank-panel,
+  .quests-panel {
     max-height: calc(100dvh - 24px);
   }
 
@@ -2138,7 +2414,8 @@ h1 {
   .tutorial-menu-actions,
   .secondary-action-row,
   .menu-action-row .practice-menu-button,
-  .menu-action-row .leaderboard-menu-button {
+  .menu-action-row .leaderboard-menu-button,
+  .menu-action-row .compact-menu-pair {
     grid-column: 1;
   }
 
@@ -2153,6 +2430,15 @@ h1 {
 
   .leaderboard-mode-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .leaderboard-choice-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rank-leaderboard-row {
+    align-items: start;
+    flex-direction: column;
   }
 
   .mode-picker-modal .picker {
@@ -2192,7 +2478,9 @@ h1 {
 .game-shell.mods,
 .game-shell.records,
 .game-shell.infiniteRecords,
-.game-shell.leaderboard {
+.game-shell.leaderboard,
+.game-shell.rank,
+.game-shell.quests {
   min-height: 100dvh;
   place-items: center;
   align-content: center;

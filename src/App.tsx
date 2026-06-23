@@ -38,7 +38,9 @@ type Screen =
   | 'mods'
   | 'records'
   | 'infiniteRecords'
-  | 'leaderboard';
+  | 'leaderboard'
+  | 'rank'
+  | 'quests';
 type AuthMode = 'signin' | 'signup';
 type SoundName =
   | 'click'
@@ -171,12 +173,47 @@ type TeleportEffect = {
 
 type RecordMap = Record<string, number>;
 
+type RankInfo = {
+  title: string;
+  min: number;
+  max: number;
+  icon: string;
+};
+
+type QuestDifficulty = 'easy' | 'medium' | 'hard';
+type QuestKind = 'survive' | 'cumulative' | 'obstacles';
+
+type Quest = {
+  id: string;
+  difficulty: QuestDifficulty;
+  title: string;
+  description: string;
+  kind: QuestKind;
+  target: number;
+  progress: number;
+  reward: number;
+  mode?: Mode;
+  completed: boolean;
+};
+
+type QuestSave = {
+  date: string;
+  quests: Quest[];
+};
+
 type LeaderboardEntry = {
   id: string;
   user_id: string;
   mode: Mode;
   nickname: string;
   seconds: number;
+};
+
+type RankLeaderboardEntry = {
+  id: string;
+  user_id: string;
+  nickname: string;
+  points: number;
 };
 
 type FeedbackReview = {
@@ -505,6 +542,8 @@ const CONTROL_KEYS = new Set([
 
 const RECORD_KEY = 'dash-practice-records-v1';
 const INFINITE_RECORD_KEY = 'beatshift-infinite-records-v1';
+const RANK_POINTS_KEY = 'beatshift-rank-points-v1';
+const QUESTS_KEY = 'beatshift-quests-v1';
 const COLORS_KEY = 'dash-practice-colors-v1';
 const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
 const AUDIO_SETTINGS_KEY = 'beatshift-audio-settings-v1';
@@ -540,6 +579,25 @@ const BEAT_INTERVAL_MS = 520;
 const ADMIN_EMAIL = 'boldinar2@gmail.com';
 const REVIEW_LIMIT = 700;
 const REVIEW_COOLDOWN_MS = 5 * 60 * 60 * 1000;
+
+const RANKS: RankInfo[] = [
+  { title: 'Дерево', min: 0, max: 99, icon: '♣' },
+  { title: 'Камень', min: 100, max: 249, icon: '◆' },
+  { title: 'Бронза', min: 250, max: 449, icon: '▲' },
+  { title: 'Серебро', min: 450, max: 699, icon: '✦' },
+  { title: 'Золото', min: 700, max: 999, icon: '★' },
+  { title: 'Платина', min: 1000, max: 1349, icon: '✧' },
+  { title: 'Алмаз', min: 1350, max: 1749, icon: '◇' },
+  { title: 'Мастер', min: 1750, max: 2199, icon: '♛' },
+];
+
+const QUEST_REWARDS: Record<QuestDifficulty, number> = {
+  easy: 50,
+  medium: 100,
+  hard: 150,
+};
+const ALMATY_UTC_OFFSET_HOURS = 5;
+const QUEST_REFRESH_HOUR_ALMATY = 13;
 
 function pickDifferent<T>(items: T[], previous?: T) {
   const variants = previous === undefined ? items : items.filter((item) => item !== previous);
@@ -725,6 +783,179 @@ function saveInfiniteRecord(mode: Mode, seconds: number) {
   const next = Math.max(records[key] ?? 0, Math.round(seconds));
   window.localStorage.setItem(INFINITE_RECORD_KEY, JSON.stringify({ ...records, [key]: next }));
   return next;
+}
+
+function loadRankPoints() {
+  try {
+    const saved = window.localStorage.getItem(RANK_POINTS_KEY);
+    const points = saved ? Number(JSON.parse(saved)) : 0;
+    return Number.isFinite(points) ? Math.max(0, Math.round(points)) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveRankPoints(points: number) {
+  const next = Math.max(0, Math.round(points));
+  window.localStorage.setItem(RANK_POINTS_KEY, JSON.stringify(next));
+  return next;
+}
+
+function getRank(points: number) {
+  return RANKS.find((rank) => points >= rank.min && points <= rank.max) ?? RANKS[RANKS.length - 1];
+}
+
+function buildQuest(
+  difficulty: QuestDifficulty,
+  kind: QuestKind,
+  target: number,
+  mode?: Mode,
+): Quest {
+  const modeTitle = mode ? MODES.find((item) => item.id === mode)?.title ?? mode : '';
+  const id = `${difficulty}-${kind}-${mode ?? 'any'}-${target}`;
+  const reward = QUEST_REWARDS[difficulty];
+  const difficultyTitle = difficulty === 'easy' ? 'Лёгкий' : difficulty === 'medium' ? 'Средний' : 'Тяжёлый';
+  const title =
+    kind === 'obstacles'
+      ? `Пройди ${target} ворот${modeTitle ? ` за ${modeTitle}` : ''}`
+      : kind === 'survive'
+        ? `Продержись ${Math.ceil(target / 60)} мин.${modeTitle ? ` за ${modeTitle}` : ''}`
+        : `Накопи ${Math.ceil(target / 60)} мин. в бесконечном уровне`;
+  const description =
+    kind === 'cumulative'
+      ? 'Можно выполнить за любое количество попыток без режима практики.'
+      : 'Выполняется в одной попытке бесконечного уровня.';
+
+  return {
+    id,
+    difficulty,
+    title,
+    description: `${difficultyTitle} квест · +${reward} очков. ${description}`,
+    kind,
+    target,
+    progress: 0,
+    reward,
+    mode,
+    completed: false,
+  };
+}
+
+function getAlmatyDate(date = new Date()) {
+  return new Date(date.getTime() + ALMATY_UTC_OFFSET_HOURS * 60 * 60 * 1000);
+}
+
+function getQuestDateKey(date = new Date()) {
+  const almaty = getAlmatyDate(date);
+  if (almaty.getUTCHours() < QUEST_REFRESH_HOUR_ALMATY) {
+    almaty.setUTCDate(almaty.getUTCDate() - 1);
+  }
+  return `${almaty.getUTCFullYear()}-${almaty.getUTCMonth() + 1}-${almaty.getUTCDate()}`;
+}
+
+function getNextQuestRefreshTime() {
+  const now = new Date();
+  const almaty = getAlmatyDate(now);
+  const targetAlmaty = new Date(
+    Date.UTC(
+      almaty.getUTCFullYear(),
+      almaty.getUTCMonth(),
+      almaty.getUTCDate(),
+      QUEST_REFRESH_HOUR_ALMATY,
+      0,
+      0,
+      0,
+    ),
+  );
+  if (almaty.getTime() >= targetAlmaty.getTime()) {
+    targetAlmaty.setUTCDate(targetAlmaty.getUTCDate() + 1);
+  }
+  return new Date(targetAlmaty.getTime() - ALMATY_UTC_OFFSET_HOURS * 60 * 60 * 1000);
+}
+
+function formatRefreshCountdown(ms: number) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function generateQuestSet(): Quest[] {
+  const random = seededRandom(
+    getQuestDateKey()
+      .split('-')
+      .reduce((seed, part) => seed * 31 + Number(part), 17),
+  );
+  const modes = MODES.map((mode) => mode.id);
+  const easyMode = modes[Math.floor(random() * modes.length)];
+  const hardMode = modes[Math.floor(random() * modes.length)];
+  return [
+    buildQuest('easy', 'survive', random() > 0.5 ? 60 : 90, easyMode),
+    buildQuest('medium', 'cumulative', random() > 0.5 ? 420 : 360),
+    buildQuest('hard', 'obstacles', random() > 0.5 ? 50 : 65, hardMode),
+  ];
+}
+
+function loadQuests(): Quest[] {
+  try {
+    const saved = window.localStorage.getItem(QUESTS_KEY);
+    if (!saved) {
+      const generated = generateQuestSet();
+      saveQuests(generated);
+      return generated;
+    }
+    const parsed = JSON.parse(saved) as QuestSave | Quest[];
+    const today = getQuestDateKey();
+    const savedQuests = Array.isArray(parsed) ? parsed : parsed.quests;
+    const savedDate = Array.isArray(parsed) ? '' : parsed.date;
+    if (savedDate !== today || !Array.isArray(savedQuests) || savedQuests.length !== 3) {
+      const generated = generateQuestSet();
+      saveQuests(generated);
+      return generated;
+    }
+    return savedQuests.map((quest, index) => ({
+      ...generateQuestSet()[index],
+      ...quest,
+      progress: Math.max(0, Number(quest.progress) || 0),
+      completed: Boolean(quest.completed),
+    }));
+  } catch {
+    return generateQuestSet();
+  }
+}
+
+function saveQuests(quests: Quest[]) {
+  window.localStorage.setItem(QUESTS_KEY, JSON.stringify({ date: getQuestDateKey(), quests }));
+}
+
+function findPassedGateKeys(level: Level, worldX: number) {
+  const blockers = level.obstacles.filter((obstacle) => (obstacle.kind ?? 'block') === 'block');
+  const topBlocks = blockers.filter((obstacle) => obstacle.y <= 4 && obstacle.height < HEIGHT - 90);
+  const bottomBlocks = blockers.filter(
+    (obstacle) => obstacle.y > PLAYER_CENTER_Y && obstacle.y + obstacle.height >= HEIGHT - 58,
+  );
+  const keys = new Set<string>();
+
+  topBlocks.forEach((top) => {
+    const bottom = bottomBlocks.find((candidate) => {
+      const overlap = Math.min(top.x + top.width, candidate.x + candidate.width) - Math.max(top.x, candidate.x);
+      const gap = candidate.y - (top.y + top.height);
+      return overlap >= Math.min(top.width, candidate.width) * 0.45 && gap >= 72;
+    });
+    if (!bottom) return;
+    const gateX = Math.max(top.x, bottom.x) + Math.min(top.width, bottom.width) / 2;
+    if (gateX > worldX) return;
+    keys.add(`${Math.round(gateX / 12)}`);
+  });
+
+  return keys;
+}
+
+function getQuestProgressText(quest: Quest) {
+  const progress = Math.min(quest.progress, quest.target);
+  if (quest.kind === 'obstacles') return `${Math.floor(progress)}/${quest.target} ворот`;
+  return `${formatDuration(progress)}/${formatDuration(quest.target)}`;
 }
 
 function formatDuration(seconds: number) {
@@ -2811,6 +3042,8 @@ export default function App() {
   const activeMusicRef = useRef<ActiveMusic | null>(null);
   const menuMusicRef = useRef<HTMLAudioElement | null>(null);
   const infiniteGeneratingRef = useRef(false);
+  const passedGateKeysRef = useRef<Set<string>>(new Set());
+  const passedGateCountRef = useRef(0);
   const screenRef = useRef<Screen>('home');
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
   const [homePreview, setHomePreview] = useState<HomePreview>(() => createHomePreview());
@@ -2825,6 +3058,10 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [records, setRecords] = useState<RecordMap>(() => loadRecords());
   const [infiniteRecords, setInfiniteRecords] = useState<RecordMap>(() => loadInfiniteRecords());
+  const [rankPoints, setRankPoints] = useState(() => loadRankPoints());
+  const [quests, setQuests] = useState<Quest[]>(() => loadQuests());
+  const [questDate, setQuestDate] = useState(() => getQuestDateKey());
+  const [questRefreshLeft, setQuestRefreshLeft] = useState(() => getNextQuestRefreshTime().getTime() - Date.now());
   const [colors, setColors] = useState<ColorSettings>(() => loadColors());
   const [modifications, setModifications] = useState<ModificationSettings>(() => loadModifications());
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => loadAudioSettings());
@@ -2846,7 +3083,12 @@ export default function App() {
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardMessage, setLeaderboardMessage] = useState('');
+  const [leaderboardModeSelectOpen, setLeaderboardModeSelectOpen] = useState(false);
   const [leaderboardListOpen, setLeaderboardListOpen] = useState(false);
+  const [rankLeaderboardOpen, setRankLeaderboardOpen] = useState(false);
+  const [rankLeaderboardEntries, setRankLeaderboardEntries] = useState<RankLeaderboardEntry[]>([]);
+  const [rankLeaderboardLoading, setRankLeaderboardLoading] = useState(false);
+  const [rankLeaderboardMessage, setRankLeaderboardMessage] = useState('');
   const [guestInfiniteNoticeOpen, setGuestInfiniteNoticeOpen] = useState(false);
   const [guestInfiniteNoticeSeen, setGuestInfiniteNoticeSeen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
@@ -2874,6 +3116,20 @@ export default function App() {
     screenRef.current = screen;
   }, [screen]);
 
+  useEffect(() => {
+    const updateQuestRefresh = () => {
+      setQuestRefreshLeft(getNextQuestRefreshTime().getTime() - Date.now());
+      const currentQuestDate = getQuestDateKey();
+      if (currentQuestDate !== questDate) {
+        setQuestDate(currentQuestDate);
+        setQuests(loadQuests());
+      }
+    };
+    updateQuestRefresh();
+    const timer = window.setInterval(updateQuestRefresh, 1000);
+    return () => window.clearInterval(timer);
+  }, [questDate]);
+
   const regularLevel = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
   const level = infiniteMode && infiniteLevel ? infiniteLevel : tutorialMode && tutorialLevel ? tutorialLevel : regularLevel;
   const homePreviewLevel = useMemo(() => buildLevel(homePreview.choice, 'normal', false), [homePreview.choice]);
@@ -2882,6 +3138,7 @@ export default function App() {
   const selectedMode = MODES.find((mode) => mode.id === choice.mode) ?? MODES[0];
   const selectedSpeed = SPEED_MODES.find((speed) => speed.id === speedMode) ?? SPEED_MODES[0];
   const selectedDifficulty = DIFFICULTIES.find((difficulty) => difficulty.id === choice.difficulty) ?? DIFFICULTIES[0];
+  const currentRank = getRank(rankPoints);
   const previewMode = MODES.find((mode) => mode.id === homePreview.choice.mode) ?? MODES[0];
   const userEmail = session?.user.email ?? '';
   const visibleNickname = nickname.trim() || (session ? getFallbackNickname(session.user) : '');
@@ -3037,6 +3294,59 @@ export default function App() {
     setLeaderboardLoading(false);
   }, []);
 
+  const loadRankLeaderboard = useCallback(async () => {
+    setRankLeaderboardLoading(true);
+    setRankLeaderboardMessage('');
+
+    if (!supabase) {
+      setRankLeaderboardEntries([]);
+      setRankLeaderboardMessage('Supabase не настроен.');
+      setRankLeaderboardLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('rank_leaderboard')
+      .select('id, user_id, nickname, points')
+      .order('points', { ascending: false })
+      .order('updated_at', { ascending: true })
+      .limit(10);
+
+    if (error) {
+      setRankLeaderboardEntries([]);
+      setRankLeaderboardMessage('Не удалось загрузить лидеров по рангу.');
+    } else {
+      setRankLeaderboardEntries((data ?? []) as RankLeaderboardEntry[]);
+    }
+    setRankLeaderboardLoading(false);
+  }, []);
+
+  const saveRankLeaderboardPoints = useCallback(
+    async (points: number) => {
+      if (!session || !supabase) return;
+      const roundedPoints = Math.max(0, Math.round(points));
+      const nextNickname = visibleNickname.trim().slice(0, 24);
+      if (!nextNickname) return;
+
+      const { error } = await supabase.from('rank_leaderboard').upsert(
+        {
+          user_id: session.user.id,
+          nickname: nextNickname,
+          points: roundedPoints,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      );
+
+      if (error) {
+        console.warn('Не удалось сохранить очки ранга:', error.message);
+      } else if (rankLeaderboardOpen) {
+        void loadRankLeaderboard();
+      }
+    },
+    [loadRankLeaderboard, rankLeaderboardOpen, session, visibleNickname],
+  );
+
   const updateNickname = useCallback(async () => {
     if (!session || !supabase) return;
     const nextNickname = nickname.trim().slice(0, 24);
@@ -3063,13 +3373,20 @@ export default function App() {
         .from('infinite_leaderboard')
         .update({ nickname: nextNickname, updated_at: new Date().toISOString() })
         .eq('user_id', session.user.id);
+      await supabase
+        .from('rank_leaderboard')
+        .update({ nickname: nextNickname, updated_at: new Date().toISOString() })
+        .eq('user_id', session.user.id);
       if (screen === 'leaderboard') {
         void loadLeaderboard(leaderboardMode);
+        if (rankLeaderboardOpen) {
+          void loadRankLeaderboard();
+        }
       }
       setNicknameMessage('Никнейм сохранён.');
       window.setTimeout(() => setNicknameMessage(''), 1800);
     }
-  }, [leaderboardMode, loadLeaderboard, nickname, screen, session]);
+  }, [leaderboardMode, loadLeaderboard, loadRankLeaderboard, nickname, rankLeaderboardOpen, screen, session]);
 
   const saveLeaderboardResult = useCallback(
     async (mode: Mode, seconds: number) => {
@@ -3661,6 +3978,34 @@ export default function App() {
         const saved = saveInfiniteRecord(choice.mode, progress);
         setInfiniteRecords((current) => ({ ...current, [infiniteRecordKey(choice.mode)]: saved }));
         void saveLeaderboardResult(choice.mode, progress);
+
+        const minutePoints = Math.floor(progress / 60) * 50;
+        const gatesPassed = passedGateCountRef.current;
+        let questPoints = 0;
+        const nextQuests = quests.map((quest) => {
+          if (quest.completed || (quest.mode && quest.mode !== choice.mode)) return quest;
+          const nextProgress =
+            quest.kind === 'cumulative'
+              ? quest.progress + progress
+              : quest.kind === 'obstacles'
+                ? Math.max(quest.progress, gatesPassed)
+                : Math.max(quest.progress, progress);
+          const completedQuest = nextProgress >= quest.target;
+          if (completedQuest) {
+            questPoints += quest.reward;
+          }
+          return { ...quest, progress: nextProgress, completed: completedQuest };
+        });
+        const earnedPoints = minutePoints + questPoints;
+        if (earnedPoints > 0) {
+          setRankPoints((current) => {
+            const nextPoints = saveRankPoints(current + earnedPoints);
+            void saveRankLeaderboardPoints(nextPoints);
+            return nextPoints;
+          });
+        }
+        setQuests(nextQuests);
+        saveQuests(nextQuests);
       } else if (saveProgress && !tutorialMode) {
         const saved = saveRecord(choice, completed ? 100 : progress);
         setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
@@ -3678,7 +4023,7 @@ export default function App() {
       setTutorialLevel(null);
       setScreen('result');
     },
-    [choice, infiniteMode, saveLeaderboardResult, session, tutorialMode],
+    [choice, infiniteMode, level, quests, saveLeaderboardResult, saveRankLeaderboardPoints, session, tutorialMode],
   );
 
   const resetRunState = () => {
@@ -3693,6 +4038,8 @@ export default function App() {
     winAnimationRef.current = null;
     teleportEffectRef.current = null;
     practiceRespawnMusicPendingRef.current = false;
+    passedGateKeysRef.current = new Set();
+    passedGateCountRef.current = 0;
   };
 
   const saveCurrentRun = () => {
@@ -3948,12 +4295,12 @@ export default function App() {
     setScreen('playing');
   };
 
-  const startInfiniteRun = async () => {
+  const startInfiniteRun = async (modeOverride?: Mode) => {
     if (infiniteLoading) return;
     playSound('start');
     setGuestInfiniteNoticeOpen(false);
     setInfiniteLoading(true);
-    const infiniteChoice: Choice = { mode: choice.mode, difficulty: 'hard' };
+    const infiniteChoice: Choice = { mode: modeOverride ?? choice.mode, difficulty: 'hard' };
     const infiniteSpeedMode: SpeedMode = 'normal';
     if (audioSettings.levelMusic) {
       startSoundtrack(infiniteChoice, infiniteSpeedMode, { infinite: true });
@@ -4062,6 +4409,8 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setLeaderboardListOpen(false);
+    setLeaderboardModeSelectOpen(false);
+    setRankLeaderboardOpen(false);
     setMenuAnimationDisabled(false);
     setInfiniteMode(false);
     setInfiniteLevel(null);
@@ -4085,6 +4434,8 @@ export default function App() {
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
     setLeaderboardListOpen(false);
+    setLeaderboardModeSelectOpen(false);
+    setRankLeaderboardOpen(false);
     setMenuAnimationDisabled(true);
     setInfiniteMode(false);
     setInfiniteLevel(null);
@@ -4396,6 +4747,15 @@ export default function App() {
       ufoJumpQueuedRef.current = false;
       const worldPlayer = { ...player, x: cameraX + player.x - 140 };
       const worldSplitPlayer = splitPlayer ? { ...splitPlayer, x: cameraX + splitPlayer.x - 140 } : null;
+      if (level.infinite) {
+        const gateKeys = findPassedGateKeys(level, worldPlayer.x);
+        gateKeys.forEach((key) => {
+          if (!passedGateKeysRef.current.has(key)) {
+            passedGateKeysRef.current.add(key);
+            passedGateCountRef.current += 1;
+          }
+        });
+      }
       trailRef.current = [...trailRef.current, { x: worldPlayer.x, y: player.y }].slice(-TRAIL_MAX_POINTS);
       if (modifications.shadow) {
         shadowHistoryRef.current = [
@@ -4552,6 +4912,12 @@ export default function App() {
       setNickname('');
     }
   }, [loadAccountNickname, session]);
+
+  useEffect(() => {
+    if (session && rankPoints > 0) {
+      void saveRankLeaderboardPoints(rankPoints);
+    }
+  }, [rankPoints, saveRankLeaderboardPoints, session]);
 
   useEffect(() => {
     const isInteractiveTarget = (target: EventTarget | null) =>
@@ -4721,7 +5087,9 @@ export default function App() {
       if (event.repeat) return;
       if (event.code !== 'Enter' && event.code !== 'Space') return;
       event.preventDefault();
-      if (lastResult?.tutorialMode && lastResult.mode) {
+      if (lastResult?.infinite && lastResult.mode) {
+        void startInfiniteRun(lastResult.mode);
+      } else if (lastResult?.tutorialMode && lastResult.mode) {
         startTutorial(lastResult.mode);
       } else {
         startRun();
@@ -5396,7 +5764,9 @@ export default function App() {
               setSpeedPickerOpen(false);
               setDifficultyPickerOpen(false);
               setControlsPickerOpen(false);
+              setLeaderboardModeSelectOpen(false);
               setLeaderboardListOpen(false);
+              setRankLeaderboardOpen(false);
               setLeaderboardMode(choice.mode);
               setScreen('leaderboard');
             }}
@@ -5409,6 +5779,41 @@ export default function App() {
               <span data-place="3" />
             </span>
           </button>
+
+          <div className="compact-menu-pair">
+            <button
+              className="menu-button compact-menu-button rank-menu-button"
+              onClick={() => {
+                setModePickerOpen(false);
+                setSpeedPickerOpen(false);
+                setDifficultyPickerOpen(false);
+                setControlsPickerOpen(false);
+                setScreen('rank');
+              }}
+              type="button"
+            >
+              <span className="rank-icon" aria-hidden="true">
+                {currentRank.icon}
+              </span>
+              <span>{currentRank.title}</span>
+            </button>
+            <button
+              className="menu-button compact-menu-button quest-menu-button"
+              onClick={() => {
+                setModePickerOpen(false);
+                setSpeedPickerOpen(false);
+                setDifficultyPickerOpen(false);
+                setControlsPickerOpen(false);
+                setScreen('quests');
+              }}
+              type="button"
+            >
+              <span className="task-icon" aria-hidden="true">
+                ✓
+              </span>
+              <span>Квесты</span>
+            </button>
+          </div>
 
           <button
             className={practiceMode ? 'menu-button practice-menu-button active' : 'menu-button practice-menu-button'}
@@ -5754,7 +6159,106 @@ export default function App() {
         </div>
       )}
 
-      {screen === 'leaderboard' && !leaderboardListOpen && (
+      {screen === 'rank' && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel rank-panel"
+            aria-label="Ранги игрока"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Ранг</h1>
+            </div>
+
+            <div className="rank-summary">
+              <span className="rank-icon" aria-hidden="true">
+                {currentRank.icon}
+              </span>
+              <div>
+                <span>{rankPoints} очков</span>
+                <strong>{currentRank.title}</strong>
+              </div>
+            </div>
+
+            <div className="rank-list">
+              {RANKS.map((rank) => (
+                <div className={rank.title === currentRank.title ? 'rank-row active' : 'rank-row'} key={rank.title}>
+                  <span>
+                    <span className="rank-icon" aria-hidden="true">
+                      {rank.icon}
+                    </span>
+                    {rank.title}
+                  </span>
+                  <strong>
+                    {rank.min}-{rank.max}
+                  </strong>
+                </div>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'quests' && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel quests-panel"
+            aria-label="Квесты"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="quests-heading">
+              <div>
+                <p className="eyebrow">BeatShift</p>
+                <h1>Квесты</h1>
+              </div>
+              <div className="quest-refresh-timer" aria-label="До обновления квестов">
+                <span>Обновление</span>
+                <strong>{formatRefreshCountdown(questRefreshLeft)}</strong>
+              </div>
+            </div>
+
+            <div className="quest-list">
+              {quests.map((quest) => (
+                <article className={quest.completed ? 'quest-card completed' : 'quest-card'} key={quest.id}>
+                  <header>
+                    <span>{quest.difficulty === 'easy' ? 'Лёгкий' : quest.difficulty === 'medium' ? 'Средний' : 'Тяжёлый'}</span>
+                    <strong>+{quest.reward}</strong>
+                  </header>
+                  <h2>{quest.title}</h2>
+                  <p>{quest.description}</p>
+                  <div className="quest-progress">
+                    <span>{quest.completed ? 'Выполнено' : getQuestProgressText(quest)}</span>
+                    <strong>{quest.completed ? '✓' : `${Math.floor((Math.min(quest.progress, quest.target) / quest.target) * 100)}%`}</strong>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'leaderboard' && !leaderboardModeSelectOpen && !leaderboardListOpen && !rankLeaderboardOpen && (
         <div
           className={
             modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
@@ -5772,12 +6276,62 @@ export default function App() {
               <h1>Лидерборд</h1>
             </div>
 
+            <div className="leaderboard-choice-grid">
+              <button className="leaderboard-choice" onClick={() => setLeaderboardModeSelectOpen(true)} type="button">
+                <span className="podium-icon" aria-hidden="true">
+                  <span data-place="2" />
+                  <span data-place="1" />
+                  <span data-place="3" />
+                </span>
+                <strong>Лидеры по режимам</strong>
+              </button>
+              <button
+                className="leaderboard-choice"
+                onClick={() => {
+                  setRankLeaderboardOpen(true);
+                  void loadRankLeaderboard();
+                }}
+                type="button"
+              >
+                <span className="rank-icon" aria-hidden="true">
+                  ♛
+                </span>
+                <strong>Лидеры по рангу</strong>
+              </button>
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'leaderboard' && leaderboardModeSelectOpen && !leaderboardListOpen && !rankLeaderboardOpen && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel leaderboard-panel"
+            aria-label="Лидерборд бесконечного уровня по режимам"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Режимы</h1>
+            </div>
+
             <div className="leaderboard-mode-grid" aria-label="Выбор режима лидерборда">
               {MODES.map((mode) => (
                 <button
                   className={leaderboardMode === mode.id ? 'leaderboard-mode active' : 'leaderboard-mode'}
                   key={mode.id}
                   onClick={() => {
+                    setLeaderboardModeSelectOpen(false);
                     setLeaderboardListOpen(true);
                     void loadLeaderboard(mode.id);
                   }}
@@ -5788,9 +6342,14 @@ export default function App() {
               ))}
             </div>
 
-            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
-              Закрыть
-            </button>
+            <div className="leaderboard-actions">
+              <button className="menu-button" onClick={() => setLeaderboardModeSelectOpen(false)} type="button">
+                Назад
+              </button>
+              <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+                Закрыть
+              </button>
+            </div>
           </section>
         </div>
       )}
@@ -5828,8 +6387,66 @@ export default function App() {
             </div>
 
             <div className="leaderboard-actions">
-              <button className="menu-button" onClick={() => setLeaderboardListOpen(false)} type="button">
+              <button
+                className="menu-button"
+                onClick={() => {
+                  setLeaderboardListOpen(false);
+                  setLeaderboardModeSelectOpen(true);
+                }}
+                type="button"
+              >
                 Режимы
+              </button>
+              <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+                Закрыть
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {screen === 'leaderboard' && rankLeaderboardOpen && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel leaderboard-panel leaderboard-list-panel"
+            aria-label="Лидеры по рангу"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="leaderboard-list">
+              <h2>Лидеры по рангу</h2>
+              {rankLeaderboardLoading && <p className="leaderboard-empty">Загрузка...</p>}
+              {!rankLeaderboardLoading && rankLeaderboardMessage && (
+                <p className="leaderboard-empty">{rankLeaderboardMessage}</p>
+              )}
+              {!rankLeaderboardLoading && !rankLeaderboardMessage && rankLeaderboardEntries.length === 0 && (
+                <p className="leaderboard-empty">Пока нет результатов.</p>
+              )}
+              {!rankLeaderboardLoading &&
+                !rankLeaderboardMessage &&
+                rankLeaderboardEntries.map((entry, index) => {
+                  const entryRank = getRank(entry.points);
+                  return (
+                    <div className="leaderboard-row rank-leaderboard-row" key={entry.id}>
+                      <span>
+                        {index + 1}. {entry.nickname}
+                      </span>
+                      <strong>
+                        {entry.points} pts - {entryRank.title}
+                      </strong>
+                    </div>
+                  );
+                })}
+            </div>
+
+            <div className="leaderboard-actions">
+              <button className="menu-button" onClick={() => setRankLeaderboardOpen(false)} type="button">
+                Назад
               </button>
               <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
                 Закрыть
@@ -5911,7 +6528,13 @@ export default function App() {
           <div className="result-actions">
             <button
               className="start-button"
-              onClick={lastResult.infinite ? startInfiniteRun : lastResult.tutorialMode && lastResult.mode ? () => startTutorial(lastResult.mode!) : startRun}
+              onClick={
+                lastResult.infinite && lastResult.mode
+                  ? () => startInfiniteRun(lastResult.mode!)
+                  : lastResult.tutorialMode && lastResult.mode
+                    ? () => startTutorial(lastResult.mode!)
+                    : startRun
+              }
               type="button"
             >
               Рестарт
