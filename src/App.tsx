@@ -2326,9 +2326,9 @@ function drawGame(
     const animatedY = obstacle.y + (1 - appearEase) * (fromCeiling ? -spawnDistance : spawnDistance);
     const localBeatPhase = (((elapsed + obstacle.x * 0.08) % BEAT_INTERVAL_MS) + BEAT_INTERVAL_MS) / BEAT_INTERVAL_MS;
     const localBeatPulse = Math.max(beatPulse * 0.82, Math.max(0, 1 - localBeatPhase) ** 1.55);
-    const beatScale = 1 + localBeatPulse * 0.2;
-    const obstacleGlow = 10 + localBeatPulse * 26;
-    const beatStrokeAlpha = 0.38 + localBeatPulse * 0.42;
+    const beatScale = 1 + localBeatPulse * 0.14;
+    const obstacleGlow = 9 + localBeatPulse * 18;
+    const beatStrokeAlpha = 0.36 + localBeatPulse * 0.32;
     const scale = (0.92 + appearEase * 0.08) * beatScale;
     ctx.save();
     ctx.globalAlpha *= appearEase;
@@ -3891,6 +3891,9 @@ export default function App() {
       cooldown: 0,
     };
     setLastResult(null);
+    if (audioSettings.levelMusic) {
+      startSoundtrack(choice, speedMode);
+    }
     setScreen('playing');
   };
 
@@ -3939,6 +3942,9 @@ export default function App() {
     };
     setLastResult(null);
     setMenuAnimationDisabled(false);
+    if (audioSettings.levelMusic) {
+      startSoundtrack(nextChoice, 'normal');
+    }
     setScreen('playing');
   };
 
@@ -3949,6 +3955,9 @@ export default function App() {
     setInfiniteLoading(true);
     const infiniteChoice: Choice = { mode: choice.mode, difficulty: 'hard' };
     const infiniteSpeedMode: SpeedMode = 'normal';
+    if (audioSettings.levelMusic) {
+      startSoundtrack(infiniteChoice, infiniteSpeedMode, { infinite: true });
+    }
     const firstSegment = await generateInfiniteSegment(infiniteChoice, infiniteSpeedMode, 900);
     const nextLevel = createInfiniteLevel(infiniteChoice, infiniteSpeedMode, firstSegment);
     clearPausedRun();
@@ -4188,6 +4197,10 @@ export default function App() {
     if (screen !== 'playing' || !audioSettings.levelMusic) {
       stopSoundtrack();
       return;
+    }
+
+    if (activeMusicRef.current) {
+      return () => stopSoundtrack();
     }
 
     startSoundtrack(choice, speedMode, { infinite: infiniteMode });
