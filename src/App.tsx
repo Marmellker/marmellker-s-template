@@ -3457,7 +3457,6 @@ export default function App() {
     }
     setSession(null);
     setNickname('');
-    setNicknameMessage('');
     setLeaderboardEntries([]);
     closeAuth();
     setScreen('home');
@@ -4320,7 +4319,6 @@ export default function App() {
       void loadAccountNickname(session.user);
     } else {
       setNickname('');
-      setNicknameMessage('');
     }
   }, [loadAccountNickname, session]);
 
@@ -4931,30 +4929,32 @@ export default function App() {
           >
             ♪
           </button>
-          {session && (
-            <label className="menu-nickname-row">
-              <span>Никнейм</span>
-              <input
-                maxLength={24}
-                onBlur={updateNickname}
-                onChange={(event) => {
-                  setNickname(event.target.value);
-                  setNicknameMessage('');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.currentTarget.blur();
-                  }
-                }}
-                placeholder="Твой никнейм"
-                value={nickname}
-              />
-              {nicknameMessage && <small>{nicknameMessage}</small>}
-            </label>
-          )}
-          <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
-            Назад
-          </button>
+          <div className="menu-back-wrap">
+            {session && (
+              <label className="menu-nickname-row">
+                <span>Никнейм</span>
+                <input
+                  maxLength={24}
+                  onBlur={updateNickname}
+                  onChange={(event) => {
+                    setNickname(event.target.value);
+                    setNicknameMessage('');
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="Твой никнейм"
+                  value={nickname}
+                />
+                {nicknameMessage && <small>{nicknameMessage}</small>}
+              </label>
+            )}
+            <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
+              Назад
+            </button>
+          </div>
 
           <div className="menu-action-row">
           <button
