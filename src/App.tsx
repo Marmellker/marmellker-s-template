@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { CSSProperties, FormEvent } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import chromeFurnaceWaveHard from './assets/audio/chrome-furnace-wave-hard.mp3';
@@ -194,6 +194,13 @@ type Quest = {
   reward: number;
   mode?: Mode;
   completed: boolean;
+};
+
+type CustomTutorialStep = {
+  target: string;
+  title: string;
+  text: string;
+  side: 'top' | 'bottom' | 'left' | 'right';
 };
 
 type QuestSave = {
@@ -549,6 +556,7 @@ const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
 const AUDIO_SETTINGS_KEY = 'beatshift-audio-settings-v1';
 const PAUSED_RUN_KEY = 'beatshift-paused-run-v1';
 const HEADPHONES_NOTICE_KEY = 'beatshift-headphones-notice-v1';
+const CUSTOM_TUTORIAL_KEY = 'beatshift-custom-tutorial-v1';
 const WIDTH = 960;
 const HEIGHT = 540;
 const PLAYER_DEFAULT_X = 142;
@@ -598,6 +606,57 @@ const QUEST_REWARDS: Record<QuestDifficulty, number> = {
 };
 const ALMATY_UTC_OFFSET_HOURS = 5;
 const QUEST_REFRESH_HOUR_ALMATY = 13;
+
+const CUSTOM_TUTORIAL_STEPS: CustomTutorialStep[] = [
+  {
+    target: 'mode',
+    title: 'Режим',
+    text: 'Здесь выбирается физика полёта: Искра, UFO, Глайдер и другие режимы.',
+    side: 'bottom',
+  },
+  {
+    target: 'difficulty',
+    title: 'Сложность',
+    text: 'Сложность меняет длину и плотность препятствий в обычном уровне.',
+    side: 'bottom',
+  },
+  {
+    target: 'speed',
+    title: 'Скорость',
+    text: 'Можно ускорить уровень, если хочется более жёсткий темп.',
+    side: 'bottom',
+  },
+  {
+    target: 'records',
+    title: 'Рекорды',
+    text: 'Тут хранятся личные рекорды обычных и бесконечных уровней.',
+    side: 'top',
+  },
+  {
+    target: 'leaderboard',
+    title: 'Лидерборды',
+    text: 'Здесь находятся топы по режимам и по очкам ранга.',
+    side: 'top',
+  },
+  {
+    target: 'practice',
+    title: 'Практика',
+    text: 'Практика включает чекпоинты, чтобы тренировать сложные места.',
+    side: 'top',
+  },
+  {
+    target: 'start',
+    title: 'Старт',
+    text: 'Эта кнопка запускает выбранный обычный уровень.',
+    side: 'top',
+  },
+  {
+    target: 'infinite',
+    title: 'Бесконечный уровень',
+    text: 'В бесконечном уровне можно зарабатывать очки ранга и выполнять квесты.',
+    side: 'top',
+  },
+];
 
 function pickDifferent<T>(items: T[], previous?: T) {
   const variants = previous === undefined ? items : items.filter((item) => item !== previous);
@@ -3104,6 +3163,9 @@ export default function App() {
   const [adminReviewsOpen, setAdminReviewsOpen] = useState(false);
   const [adminReviews, setAdminReviews] = useState<FeedbackReview[]>([]);
   const [adminReviewsLoading, setAdminReviewsLoading] = useState(false);
+  const [customTutorialOpen, setCustomTutorialOpen] = useState(false);
+  const [customTutorialStep, setCustomTutorialStep] = useState(0);
+  const [customTutorialRect, setCustomTutorialRect] = useState<DOMRect | null>(null);
   const [headphonesNoticeOpen, setHeadphonesNoticeOpen] = useState(() => {
     try {
       return window.localStorage.getItem(HEADPHONES_NOTICE_KEY) !== 'dismissed';
@@ -3115,6 +3177,31 @@ export default function App() {
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
+
+  useEffect(() => {
+    if (!customTutorialOpen || screen !== 'menu') {
+      setCustomTutorialRect(null);
+      return;
+    }
+
+    const updateRect = () => {
+      const target = CUSTOM_TUTORIAL_STEPS[customTutorialStep]?.target;
+      const element = target
+        ? document.querySelector<HTMLElement>(`[data-custom-tour="${target}"]`)
+        : null;
+      setCustomTutorialRect(element?.getBoundingClientRect() ?? null);
+    };
+
+    updateRect();
+    const frame = window.requestAnimationFrame(updateRect);
+    window.addEventListener('resize', updateRect);
+    window.addEventListener('scroll', updateRect, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateRect);
+      window.removeEventListener('scroll', updateRect, true);
+    };
+  }, [customTutorialOpen, customTutorialStep, screen]);
 
   useEffect(() => {
     const updateQuestRefresh = () => {
@@ -3143,6 +3230,96 @@ export default function App() {
   const userEmail = session?.user.email ?? '';
   const visibleNickname = nickname.trim() || (session ? getFallbackNickname(session.user) : '');
   const isAdmin = session?.user.email?.toLowerCase() === ADMIN_EMAIL;
+  const customTutorialInfo = CUSTOM_TUTORIAL_STEPS[customTutorialStep] ?? CUSTOM_TUTORIAL_STEPS[0];
+  const customTutorialLayout =
+    customTutorialRect && typeof window !== 'undefined'
+      ? (() => {
+          const bubbleWidth = Math.min(300, window.innerWidth - 24);
+          const bubbleHeight = 150;
+          const centerX = customTutorialRect.left + customTutorialRect.width / 2;
+          const centerY = customTutorialRect.top + customTutorialRect.height / 2;
+          const left =
+            customTutorialInfo.side === 'left'
+              ? customTutorialRect.left - bubbleWidth - 18
+              : customTutorialInfo.side === 'right'
+                ? customTutorialRect.right + 18
+                : centerX - bubbleWidth / 2;
+          const top =
+            customTutorialInfo.side === 'top'
+              ? customTutorialRect.top - bubbleHeight - 18
+              : customTutorialInfo.side === 'bottom'
+                ? customTutorialRect.bottom + 18
+                : centerY - bubbleHeight / 2;
+          const bubbleLeft = clamp(left, 12, window.innerWidth - bubbleWidth - 12);
+          const bubbleTop = clamp(top, 12, window.innerHeight - bubbleHeight - 12);
+          const bubbleCenterX = bubbleLeft + bubbleWidth / 2;
+          const bubbleCenterY = bubbleTop + bubbleHeight / 2;
+          const dx = centerX - bubbleCenterX;
+          const dy = centerY - bubbleCenterY;
+          const distance = Math.hypot(dx, dy);
+          const startOffset = 18;
+          const endOffset = 22;
+          const usableDistance = Math.max(distance - startOffset - endOffset, 0);
+          const unitX = distance > 0 ? dx / distance : 0;
+          const unitY = distance > 0 ? dy / distance : 0;
+          const arrowStartX = bubbleCenterX + unitX * startOffset;
+          const arrowStartY = bubbleCenterY + unitY * startOffset;
+          const angle = Math.atan2(dy, dx);
+
+          return {
+            bubble: {
+              width: `${bubbleWidth}px`,
+              left: `${bubbleLeft}px`,
+              top: `${bubbleTop}px`,
+            } satisfies CSSProperties,
+            spotlight: {
+              left: `${centerX}px`,
+              top: `${centerY}px`,
+            } satisfies CSSProperties,
+            arrow: {
+              left: `${arrowStartX}px`,
+              top: `${arrowStartY}px`,
+              width: `${usableDistance}px`,
+              transform: `rotate(${angle}rad)`,
+            } satisfies CSSProperties,
+          };
+        })()
+      : undefined;
+  const customTutorialBubbleStyle = customTutorialLayout?.bubble;
+  const customTutorialSpotlightStyle = customTutorialLayout?.spotlight;
+  const customTutorialArrowStyle = customTutorialLayout?.arrow;
+
+  const startCustomTutorial = useCallback(() => {
+    setModePickerOpen(false);
+    setSpeedPickerOpen(false);
+    setDifficultyPickerOpen(false);
+    setControlsPickerOpen(false);
+    setAudioSettingsOpen(false);
+    setGuestInfiniteNoticeOpen(false);
+    setCustomTutorialStep(0);
+    setCustomTutorialOpen(true);
+  }, []);
+
+  const finishCustomTutorial = useCallback(() => {
+    setCustomTutorialOpen(false);
+    setCustomTutorialStep(0);
+    setCustomTutorialRect(null);
+    try {
+      window.localStorage.setItem(CUSTOM_TUTORIAL_KEY, 'done');
+    } catch {
+      // Если localStorage недоступен, обучение просто снова появится после перезагрузки.
+    }
+  }, []);
+
+  const nextCustomTutorialStep = useCallback(() => {
+    setCustomTutorialStep((current) => {
+      if (current >= CUSTOM_TUTORIAL_STEPS.length - 1) {
+        window.setTimeout(finishCustomTutorial, 0);
+        return current;
+      }
+      return current + 1;
+    });
+  }, [finishCustomTutorial]);
 
   const closeHeadphonesNotice = useCallback(() => {
     setHeadphonesNoticeOpen(false);
@@ -4472,6 +4649,13 @@ export default function App() {
     playSound('start');
     setMenuAnimationDisabled(false);
     setScreen('menu');
+    try {
+      if (window.localStorage.getItem(CUSTOM_TUTORIAL_KEY) !== 'done') {
+        window.setTimeout(startCustomTutorial, 0);
+      }
+    } catch {
+      window.setTimeout(startCustomTutorial, 0);
+    }
   };
 
   const openTutorialLevels = () => {
@@ -5603,6 +5787,7 @@ export default function App() {
           </div>
           <button
             className="menu-button controls-menu-button"
+            data-custom-tour="controls"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5657,6 +5842,7 @@ export default function App() {
           <div className="menu-action-row">
           <button
             className="option mode-trigger"
+            data-custom-tour="mode"
             onClick={() => {
               setSpeedPickerOpen(false);
               setDifficultyPickerOpen(false);
@@ -5673,6 +5859,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="difficulty"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5686,6 +5873,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="speed"
             onClick={() => {
               setModePickerOpen(false);
               setDifficultyPickerOpen(false);
@@ -5699,6 +5887,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="colors"
             onClick={() => {
     setModePickerOpen(false);
     setSpeedPickerOpen(false);
@@ -5714,6 +5903,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="mods"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5728,6 +5918,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="records"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5743,6 +5934,7 @@ export default function App() {
 
           <button
             className="option mode-trigger"
+            data-custom-tour="infiniteRecords"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5759,6 +5951,7 @@ export default function App() {
           <button
             aria-label="Лидерборд бесконечного уровня"
             className="menu-button leaderboard-menu-button"
+            data-custom-tour="leaderboard"
             onClick={() => {
               setModePickerOpen(false);
               setSpeedPickerOpen(false);
@@ -5783,6 +5976,7 @@ export default function App() {
           <div className="compact-menu-pair">
             <button
               className="menu-button compact-menu-button rank-menu-button"
+              data-custom-tour="rank"
               onClick={() => {
                 setModePickerOpen(false);
                 setSpeedPickerOpen(false);
@@ -5799,6 +5993,7 @@ export default function App() {
             </button>
             <button
               className="menu-button compact-menu-button quest-menu-button"
+              data-custom-tour="quests"
               onClick={() => {
                 setModePickerOpen(false);
                 setSpeedPickerOpen(false);
@@ -5817,6 +6012,7 @@ export default function App() {
 
           <button
             className={practiceMode ? 'menu-button practice-menu-button active' : 'menu-button practice-menu-button'}
+            data-custom-tour="practice"
             onClick={() => setPracticeMode((current) => !current)}
             type="button"
           >
@@ -5825,10 +6021,10 @@ export default function App() {
 
           </div>
 
-          <button className="start-button" onClick={startRun} type="button">
+          <button className="start-button" data-custom-tour="start" onClick={startRun} type="button">
             Старт
           </button>
-          <button className="infinite-button" disabled={infiniteLoading} onClick={requestInfiniteRun} type="button">
+          <button className="infinite-button" data-custom-tour="infinite" disabled={infiniteLoading} onClick={requestInfiniteRun} type="button">
             {infiniteLoading ? 'Генерация...' : 'Бесконечный уровень'}
           </button>
           <div className="secondary-action-row">
@@ -5837,6 +6033,33 @@ export default function App() {
             </button>
           </div>
         </section>
+      )}
+
+      {screen === 'menu' && customTutorialOpen && customTutorialRect && (
+        <div className="custom-tutorial-layer" aria-live="polite">
+          <div className="custom-tutorial-spotlight" style={customTutorialSpotlightStyle} />
+          <div className="custom-tutorial-arrow" style={customTutorialArrowStyle} aria-hidden="true" />
+          <section
+            key={customTutorialStep}
+            className="custom-tutorial-cloud"
+            style={customTutorialBubbleStyle}
+            aria-label="Краткое обучение"
+          >
+            <span className="custom-tutorial-count">
+              {customTutorialStep + 1}/{CUSTOM_TUTORIAL_STEPS.length}
+            </span>
+            <h2>{customTutorialInfo.title}</h2>
+            <p>{customTutorialInfo.text}</p>
+            <div className="custom-tutorial-actions">
+              <button className="menu-button custom-tutorial-skip" onClick={finishCustomTutorial} type="button">
+                Пропустить обучение
+              </button>
+              <button className="menu-button custom-tutorial-next" onClick={nextCustomTutorialStep} type="button">
+                {customTutorialStep >= CUSTOM_TUTORIAL_STEPS.length - 1 ? 'Готово' : 'Далее'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {screen === 'menu' && guestInfiniteNoticeOpen && (
@@ -5979,6 +6202,18 @@ export default function App() {
             </div>
 
             <div className="controls-list">
+              {screen === 'menu' && (
+                <button
+                  className="menu-button controls-tutorial-button"
+                  onClick={() => {
+                    setControlsPickerOpen(false);
+                    window.setTimeout(startCustomTutorial, 0);
+                  }}
+                  type="button"
+                >
+                  Туториал
+                </button>
+              )}
               <div className="control-row">
                 <span>Полёт / действие</span>
                 <strong>Пробел, W/A/S/D, стрелки, мышь, касание</strong>
