@@ -5073,9 +5073,9 @@ export default function App() {
             type="button"
           >
             <span className="podium-icon" aria-hidden="true">
-              <span />
-              <span />
-              <span />
+              <span data-place="2" />
+              <span data-place="1" />
+              <span data-place="3" />
             </span>
           </button>
 

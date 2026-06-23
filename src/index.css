@@ -999,7 +999,12 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
+.menu-action-row .leaderboard-menu-button {
+  grid-column: 3;
+}
+
 .leaderboard-menu-button {
+  width: 100%;
   min-height: 76px;
   display: grid;
   place-items: center;
@@ -1009,15 +1014,16 @@ h1 {
 }
 
 .podium-icon {
-  width: 42px;
-  height: 36px;
+  width: 54px;
+  height: 50px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   align-items: end;
-  gap: 4px;
+  gap: 5px;
 }
 
 .podium-icon span {
+  position: relative;
   display: block;
   border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 5px 5px 3px 3px;
@@ -1025,16 +1031,28 @@ h1 {
   box-shadow: 0 0 16px rgba(57, 208, 255, 0.22);
 }
 
+.podium-icon span::before {
+  content: attr(data-place);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  transform: translateX(-50%);
+}
+
 .podium-icon span:nth-child(1) {
-  height: 20px;
+  height: 22px;
 }
 
 .podium-icon span:nth-child(2) {
-  height: 32px;
+  height: 34px;
 }
 
 .podium-icon span:nth-child(3) {
-  height: 25px;
+  height: 27px;
 }
 
 .menu-action-row .mode-trigger span {
@@ -1834,7 +1852,7 @@ h1 {
   }
 
   .menu-action-row .practice-menu-button,
-  .leaderboard-menu-button {
+  .menu-action-row .leaderboard-menu-button {
     grid-column: auto;
   }
 
@@ -1898,7 +1916,7 @@ h1 {
   .tutorial-menu-actions,
   .secondary-action-row,
   .menu-action-row .practice-menu-button,
-  .leaderboard-menu-button {
+  .menu-action-row .leaderboard-menu-button {
     grid-column: 1;
   }
 
