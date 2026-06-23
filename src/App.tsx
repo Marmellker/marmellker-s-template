@@ -1294,6 +1294,79 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     return { duration, speed, obstacles, orbs };
   }
 
+  if (!splitMode && choice.mode === 'orbit' && choice.difficulty === 'medium') {
+    const spacing = 500;
+    const width = 66;
+    const centers = [270, 226, 318, 252, 344, 286, 206, 238, 328, 356, 292, 218];
+
+    for (let x = 920; x < levelLength - 900; x += spacing) {
+      const section = Math.floor((x - 920) / spacing);
+      const center =
+        centers[section % centers.length] +
+        Math.sin(section * 0.64) * 12 +
+        Math.sin(x / 840) * 10;
+      const gap = 220 + Math.sin(section * 0.72) * 10 + (section % 9 === 5 ? 16 : 0);
+      const topHeight = Math.max(58, center - gap / 2);
+      const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
+      const bottomHeight = HEIGHT - bottomY - 52;
+      const color = section % 2 === 0 ? '#243b53' : '#7c314f';
+
+      obstacles.push({ x, y: 0, width, height: topHeight, color });
+      obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
+
+      if (section % 3 === 0) {
+        const spikeHeight = 40;
+        const spikeWidth = 46;
+        const fromTop = section % 2 === 1;
+        for (let index = 0; index < 3; index += 1) {
+          obstacles.push({
+            kind: 'spike',
+            direction: fromTop ? 'down' : 'up',
+            x: x + 78 + index * (spikeWidth + 8),
+            y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
+            width: spikeWidth,
+            height: spikeHeight,
+            color: fromTop ? '#2f4f74' : '#8f3d58',
+          });
+        }
+      }
+
+      if (section % 3 !== 1) {
+        obstacles.push({
+          x: x + 214,
+          y: clamp(center + (section % 4 < 2 ? -118 : 78), PLAYER_MIN_Y + 18, PLAYER_MAX_Y - 74),
+          width: 48,
+          height: 38,
+          color: '#3d2c8d',
+        });
+      }
+
+      if (section % 2 === 0) {
+        obstacles.push({
+          kind: 'saw',
+          x: x + 318,
+          y: clamp(center + (section % 4 === 0 ? 70 : -98), PLAYER_MIN_Y + 18, PLAYER_MAX_Y - 58),
+          width: 40,
+          height: 40,
+          color: '#d9e2ec',
+        });
+      }
+
+      if (section % 7 === 2 || section % 7 === 5 || section % 7 === 6) {
+        obstacles.push({
+          kind: 'spikedBlock',
+          x: x + 414,
+          y: clamp(center + (section % 2 === 0 ? -48 : 44), PLAYER_MIN_Y + 16, PLAYER_MAX_Y - 72),
+          width: 54,
+          height: 52,
+          color: '#6842c2',
+        });
+      }
+    }
+
+    return { duration, speed, obstacles, orbs };
+  }
+
   if (!splitMode && choice.mode === 'orbit' && choice.difficulty === 'hard') {
     const spacing = 470;
     const width = 54;
