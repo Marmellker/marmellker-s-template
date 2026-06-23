@@ -255,6 +255,44 @@ canvas {
   backdrop-filter: blur(12px);
 }
 
+.headphones-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 40;
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid rgba(57, 208, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(13, 18, 31, 0.9);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.34);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.headphones-notice span {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.headphones-notice button {
+  min-width: 42px;
+  min-height: 30px;
+  border: 1px solid rgba(57, 208, 255, 0.48);
+  border-radius: 8px;
+  background: rgba(57, 208, 255, 0.14);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .audio-settings-button {
   width: 48px;
   min-width: 48px;

@@ -509,6 +509,7 @@ const COLORS_KEY = 'dash-practice-colors-v1';
 const MODIFICATIONS_KEY = 'dash-practice-modifications-v1';
 const AUDIO_SETTINGS_KEY = 'beatshift-audio-settings-v1';
 const PAUSED_RUN_KEY = 'beatshift-paused-run-v1';
+const HEADPHONES_NOTICE_KEY = 'beatshift-headphones-notice-v1';
 const WIDTH = 960;
 const HEIGHT = 540;
 const PLAYER_DEFAULT_X = 142;
@@ -535,8 +536,10 @@ const ORBIT_SPEED = 3.35;
 const INFINITE_DURATION = 24 * 60 * 60 * 1000;
 const INFINITE_SEGMENT_LENGTH = 2_200;
 const INFINITE_GENERATE_AHEAD = 2_800;
+const BEAT_INTERVAL_MS = 520;
 const ADMIN_EMAIL = 'boldinar2@gmail.com';
 const REVIEW_LIMIT = 700;
+const REVIEW_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 
 function pickDifferent<T>(items: T[], previous?: T) {
   const variants = previous === undefined ? items : items.filter((item) => item !== previous);
@@ -739,6 +742,14 @@ function formatReviewDate(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatCooldown(ms: number) {
+  const totalMinutes = Math.max(1, Math.ceil(ms / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes} мин.`;
+  return minutes > 0 ? `${hours} ч. ${minutes} мин.` : `${hours} ч.`;
 }
 
 function getFallbackNickname(user: User) {
@@ -2235,15 +2246,27 @@ function drawGame(
   const hudProgress = level.infinite ? (elapsed % 30_000) / 30_000 : progress;
   const cameraX = (elapsed / 1000) * level.speed;
   const accent = getModeColor(colors, choice.mode);
+  const beatPhase = (elapsed % BEAT_INTERVAL_MS) / BEAT_INTERVAL_MS;
+  const beatPulse = Math.max(0, 1 - beatPhase) ** 1.9;
+  const flow = elapsed / 1000;
 
-  const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
-  sky.addColorStop(0, '#111827');
-  sky.addColorStop(0.52, '#182236');
+  const sky = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+  sky.addColorStop(0, '#0b1020');
+  sky.addColorStop(0.28 + Math.sin(flow * 0.34) * 0.1, 'rgba(27, 42, 68, 1)');
+  sky.addColorStop(0.7 + Math.cos(flow * 0.28) * 0.1, 'rgba(17, 24, 39, 1)');
   sky.addColorStop(1, '#10151f');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  const washX = ((flow * 58) % (WIDTH + 420)) - 210;
+  const wash = ctx.createLinearGradient(washX - 210, 0, washX + 210, HEIGHT);
+  wash.addColorStop(0, 'rgba(57, 208, 255, 0)');
+  wash.addColorStop(0.5, `${accent}3a`);
+  wash.addColorStop(1, 'rgba(255, 95, 109, 0)');
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.strokeStyle = `rgba(255,255,255,${0.055 + beatPulse * 0.075})`;
   ctx.lineWidth = 1;
   for (let x = -((cameraX * 0.35) % 80); x < WIDTH; x += 80) {
     ctx.beginPath();
@@ -2301,7 +2324,10 @@ function drawGame(
     const spawnDistance = obstacle.kind === 'saw' ? 88 : clamp(obstacle.height * 0.72, 64, 190);
     const animatedX = screenX;
     const animatedY = obstacle.y + (1 - appearEase) * (fromCeiling ? -spawnDistance : spawnDistance);
-    const scale = 0.92 + appearEase * 0.08;
+    const localBeatPhase = (((elapsed + obstacle.x * 0.42) % BEAT_INTERVAL_MS) + BEAT_INTERVAL_MS) / BEAT_INTERVAL_MS;
+    const localBeatPulse = Math.max(0, 1 - localBeatPhase) ** 1.85;
+    const beatScale = 1 + localBeatPulse * 0.12;
+    const scale = (0.92 + appearEase * 0.08) * beatScale;
     ctx.save();
     ctx.globalAlpha *= appearEase;
 
@@ -2831,6 +2857,13 @@ export default function App() {
   const [adminReviewsOpen, setAdminReviewsOpen] = useState(false);
   const [adminReviews, setAdminReviews] = useState<FeedbackReview[]>([]);
   const [adminReviewsLoading, setAdminReviewsLoading] = useState(false);
+  const [headphonesNoticeOpen, setHeadphonesNoticeOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(HEADPHONES_NOTICE_KEY) !== 'dismissed';
+    } catch {
+      return true;
+    }
+  });
 
   useEffect(() => {
     screenRef.current = screen;
@@ -2848,6 +2881,15 @@ export default function App() {
   const userEmail = session?.user.email ?? '';
   const visibleNickname = nickname.trim() || (session ? getFallbackNickname(session.user) : '');
   const isAdmin = session?.user.email?.toLowerCase() === ADMIN_EMAIL;
+
+  const closeHeadphonesNotice = useCallback(() => {
+    setHeadphonesNoticeOpen(false);
+    try {
+      window.localStorage.setItem(HEADPHONES_NOTICE_KEY, 'dismissed');
+    } catch {
+      // Если localStorage недоступен, просто закрываем до перезагрузки.
+    }
+  }, []);
 
   const loadAccountNickname = useCallback(async (user: User) => {
     if (!supabase) {
@@ -2910,6 +2952,12 @@ export default function App() {
       setReviewMessage(`Максимум ${REVIEW_LIMIT} символов.`);
       return;
     }
+    const lastReviewAt = ownReviews[0]?.created_at ? new Date(ownReviews[0].created_at).getTime() : 0;
+    const cooldownLeft = REVIEW_COOLDOWN_MS - (Date.now() - lastReviewAt);
+    if (cooldownLeft > 0) {
+      setReviewMessage(`Следующий отзыв можно отправить через ${formatCooldown(cooldownLeft)}.`);
+      return;
+    }
 
     setReviewBusy(true);
     setReviewMessage('');
@@ -2922,13 +2970,15 @@ export default function App() {
     setReviewBusy(false);
 
     if (error) {
-      setReviewMessage('Не удалось сохранить отзыв.');
+      setReviewMessage(error.message.includes('review cooldown')
+        ? 'Следующий отзыв можно отправить через 5 часов после предыдущего.'
+        : 'Не удалось сохранить отзыв.');
     } else {
       setReviewText('');
       setReviewMessage('Отзыв сохранён.');
       void loadOwnReviews();
     }
-  }, [loadOwnReviews, reviewText, session, visibleNickname]);
+  }, [loadOwnReviews, ownReviews, reviewText, session, visibleNickname]);
 
   const loadAdminReviews = useCallback(async () => {
     if (!isAdmin || !supabase) return;
@@ -4791,6 +4841,15 @@ export default function App() {
 
   return (
     <main className={`game-shell ${screen}`}>
+      {headphonesNoticeOpen && (
+        <aside className="headphones-notice" aria-label="Совет по звуку">
+          <span>Используйте наушники для лучшего впечатления</span>
+          <button onClick={closeHeadphonesNotice} type="button">
+            Ок
+          </button>
+        </aside>
+      )}
+
       {audioSettingsOpen && (
         <div
           className={modalClosing ? 'modal-backdrop audio-settings-backdrop modal-closing' : 'modal-backdrop audio-settings-backdrop'}
