@@ -4894,6 +4894,9 @@ export default function App() {
           className={menuAnimationDisabled ? 'control-panel menu-panel menu-panel-static' : 'control-panel menu-panel'}
           aria-label="Настройки тренировки"
         >
+          <div className="menu-title">
+            <p className="eyebrow">BeatShift</p>
+          </div>
           <div className="menu-account-row">
             <span>{session ? `${visibleNickname} · ${userEmail}` : 'Гость'}</span>
             {session && (
@@ -4928,12 +4931,6 @@ export default function App() {
           >
             ♪
           </button>
-          <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
-            Назад
-          </button>
-          <div className="menu-title">
-            <p className="eyebrow">BeatShift</p>
-          </div>
           {session && (
             <label className="menu-nickname-row">
               <span>Никнейм</span>
@@ -4955,6 +4952,9 @@ export default function App() {
               {nicknameMessage && <small>{nicknameMessage}</small>}
             </label>
           )}
+          <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
+            Назад
+          </button>
 
           <div className="menu-action-row">
           <button
