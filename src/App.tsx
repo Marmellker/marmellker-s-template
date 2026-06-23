@@ -1623,10 +1623,20 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     }
 
     const shouldAddOrbitBlock =
-      !mediumOrbitRelief && !splitMode && isOrbit && choice.difficulty !== 'easy' ? random() > (mediumOrbit ? 0.34 : 0.58) : false;
-    const orbitBlockX = shouldAddOrbitBlock ? x + spacing * (0.44 + random() * 0.18) : 0;
-    const orbitBlockY = shouldAddOrbitBlock ? 156 + random() * 210 : 0;
-    const orbitBlockHeight = shouldAddOrbitBlock ? 36 + random() * 34 : 0;
+      !splitMode && isOrbit && choice.difficulty !== 'easy'
+        ? mediumOrbitRelief || random() > (mediumOrbit ? 0.34 : 0.58)
+        : false;
+    const orbitBlockX = shouldAddOrbitBlock
+      ? mediumOrbitRelief
+        ? x + spacing * 0.16
+        : x + spacing * (0.44 + random() * 0.18)
+      : 0;
+    const orbitBlockY = shouldAddOrbitBlock
+      ? mediumOrbitRelief
+        ? clamp(center - 112, PLAYER_MIN_Y + 18, PLAYER_MAX_Y - 86)
+        : 156 + random() * 210
+      : 0;
+    const orbitBlockHeight = shouldAddOrbitBlock ? (mediumOrbitRelief ? 34 : 36 + random() * 34) : 0;
     if (shouldAddOrbitBlock) {
       obstacles.push({
         x: orbitBlockX,
@@ -1638,11 +1648,17 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     }
 
     const shouldAddSaw =
-      !mediumOrbitRelief && random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
+      mediumOrbitRelief || random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
     if (shouldAddSaw) {
       const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
-      const sawX = x + spacing * (0.46 + random() * 0.22);
-      const sawY = splitMode ? 190 + random() * 130 : isFlipWave || isOrbit ? 158 + random() * 210 : 128 + random() * 260;
+      const sawX = mediumOrbitRelief ? x + spacing * 0.52 : x + spacing * (0.46 + random() * 0.22);
+      const sawY = mediumOrbitRelief
+        ? clamp(center + 78, PLAYER_MIN_Y + 20, PLAYER_MAX_Y - sawSize - 12)
+        : splitMode
+          ? 190 + random() * 130
+          : isFlipWave || isOrbit
+            ? 158 + random() * 210
+            : 128 + random() * 260;
       obstacles.push({
         kind: 'saw',
         x: sawX,
@@ -1654,10 +1670,16 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     }
 
     const shouldAddSpikedBlock =
-      !mediumOrbitRelief && random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
+      mediumOrbitRelief || random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
     if (shouldAddSpikedBlock) {
-      const spikedBlockX = x + spacing * (0.3 + random() * 0.35);
-      const spikedBlockY = splitMode ? 218 + random() * 80 : isFlipWave || isOrbit ? 164 + random() * 190 : 132 + random() * 230;
+      const spikedBlockX = mediumOrbitRelief ? x + spacing * 0.84 : x + spacing * (0.3 + random() * 0.35);
+      const spikedBlockY = mediumOrbitRelief
+        ? clamp(center - 48, PLAYER_MIN_Y + 16, PLAYER_MAX_Y - 72)
+        : splitMode
+          ? 218 + random() * 80
+          : isFlipWave || isOrbit
+            ? 164 + random() * 190
+            : 132 + random() * 230;
       obstacles.push({
         kind: 'spikedBlock',
         x: spikedBlockX,
