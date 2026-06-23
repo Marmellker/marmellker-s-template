@@ -1375,6 +1375,39 @@ h1 {
   border-color: rgba(125, 249, 194, 0.52);
 }
 
+.guest-infinite-modal {
+  width: min(520px, calc(100vw - 48px));
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid rgba(250, 204, 21, 0.36);
+  border-radius: 8px;
+  background: rgba(13, 18, 31, 0.94);
+  text-align: center;
+}
+
+.guest-infinite-modal p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.guest-infinite-actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.guest-infinite-actions .menu-button {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
 .start-button {
   min-height: 54px;
   padding: 13px 18px;
@@ -1973,6 +2006,10 @@ h1 {
 
   .menu-nickname-row {
     width: min(100%, 260px);
+  }
+
+  .guest-infinite-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

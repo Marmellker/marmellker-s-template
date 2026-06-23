@@ -2759,6 +2759,7 @@ export default function App() {
   const activeMusicRef = useRef<ActiveMusic | null>(null);
   const menuMusicRef = useRef<HTMLAudioElement | null>(null);
   const infiniteGeneratingRef = useRef(false);
+  const screenRef = useRef<Screen>('home');
   const [choice, setChoice] = useState<Choice>({ mode: 'wave', difficulty: 'easy' });
   const [homePreview, setHomePreview] = useState<HomePreview>(() => createHomePreview());
   const [homePreviewTransitioning, setHomePreviewTransitioning] = useState(false);
@@ -2794,11 +2795,17 @@ export default function App() {
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardMessage, setLeaderboardMessage] = useState('');
   const [leaderboardListOpen, setLeaderboardListOpen] = useState(false);
+  const [guestInfiniteNoticeOpen, setGuestInfiniteNoticeOpen] = useState(false);
+  const [guestInfiniteNoticeSeen, setGuestInfiniteNoticeSeen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
 
   const regularLevel = useMemo(() => buildLevel(choice, speedMode, modifications.splitMode), [choice, speedMode, modifications.splitMode]);
   const level = infiniteMode && infiniteLevel ? infiniteLevel : tutorialMode && tutorialLevel ? tutorialLevel : regularLevel;
@@ -3460,6 +3467,7 @@ export default function App() {
     setNickname('');
     setLeaderboardEntries([]);
     setLeaderboardListOpen(false);
+    setGuestInfiniteNoticeOpen(false);
     closeAuth();
     setScreen('home');
   };
@@ -3491,7 +3499,7 @@ export default function App() {
       setTutorialLevel(null);
       setScreen('result');
     },
-    [choice, infiniteMode, saveLeaderboardResult, tutorialMode],
+    [choice, infiniteMode, saveLeaderboardResult, session, tutorialMode],
   );
 
   const resetRunState = () => {
@@ -3677,6 +3685,7 @@ export default function App() {
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
+    setGuestInfiniteNoticeOpen(false);
     attemptRef.current += 1;
     elapsedRef.current = 0;
     lastTimeRef.current = 0;
@@ -3723,6 +3732,7 @@ export default function App() {
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
+    setGuestInfiniteNoticeOpen(false);
     attemptRef.current += 1;
     elapsedRef.current = 0;
     lastTimeRef.current = 0;
@@ -3756,6 +3766,7 @@ export default function App() {
   const startInfiniteRun = async () => {
     if (infiniteLoading) return;
     playSound('start');
+    setGuestInfiniteNoticeOpen(false);
     setInfiniteLoading(true);
     const infiniteChoice: Choice = { mode: choice.mode, difficulty: 'hard' };
     const infiniteSpeedMode: SpeedMode = 'normal';
@@ -3773,6 +3784,7 @@ export default function App() {
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
+    setGuestInfiniteNoticeOpen(false);
     attemptRef.current += 1;
     elapsedRef.current = 0;
     lastTimeRef.current = 0;
@@ -3802,6 +3814,29 @@ export default function App() {
     setLastResult(null);
     setInfiniteLoading(false);
     setScreen('playing');
+  };
+
+  const requestInfiniteRun = () => {
+    if (!session && !guestInfiniteNoticeSeen) {
+      playSound('click');
+      setGuestInfiniteNoticeOpen(true);
+      return;
+    }
+    void startInfiniteRun();
+  };
+
+  const acceptGuestInfiniteNotice = () => {
+    setGuestInfiniteNoticeSeen(true);
+    setGuestInfiniteNoticeOpen(false);
+    void startInfiniteRun();
+  };
+
+  const openAuthFromGuestInfiniteNotice = (mode: AuthMode) => {
+    playSound('click');
+    setGuestInfiniteNoticeOpen(false);
+    setAuthMode(mode);
+    setMenuAnimationDisabled(false);
+    setScreen('home');
   };
 
   const pauseRun = () => {
@@ -4291,7 +4326,7 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
-      if (data.session && !loadPausedRun()) {
+      if (data.session && !loadPausedRun() && screenRef.current === 'home') {
         void saveAccount(data.session.user);
         setMenuAnimationDisabled(false);
         setScreen('levelSelect');
@@ -4304,7 +4339,7 @@ export default function App() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
-      if (nextSession && !loadPausedRun()) {
+      if (nextSession && !loadPausedRun() && _event === 'SIGNED_IN' && screenRef.current === 'home') {
         void saveAccount(nextSession.user);
         setAuthMode(null);
         setMenuAnimationDisabled(false);
@@ -5097,7 +5132,7 @@ export default function App() {
           <button className="start-button" onClick={startRun} type="button">
             Старт
           </button>
-          <button className="infinite-button" disabled={infiniteLoading} onClick={startInfiniteRun} type="button">
+          <button className="infinite-button" disabled={infiniteLoading} onClick={requestInfiniteRun} type="button">
             {infiniteLoading ? 'Генерация...' : 'Бесконечный уровень'}
           </button>
           <div className="secondary-action-row">
@@ -5106,6 +5141,25 @@ export default function App() {
             </button>
           </div>
         </section>
+      )}
+
+      {screen === 'menu' && guestInfiniteNoticeOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="control-panel guest-infinite-modal" aria-label="Гостевой режим">
+            <p>Войдите, чтобы сохранить ваш результат и попасть в списки лидеров</p>
+            <div className="guest-infinite-actions">
+              <button className="menu-button" onClick={() => openAuthFromGuestInfiniteNotice('signin')} type="button">
+                Войти
+              </button>
+              <button className="menu-button" onClick={() => openAuthFromGuestInfiniteNotice('signup')} type="button">
+                Зарегистрироваться
+              </button>
+              <button className="menu-button" onClick={acceptGuestInfiniteNotice} type="button">
+                Продолжить
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {screen === 'menu' && modePickerOpen && (
