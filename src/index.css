@@ -1944,6 +1944,30 @@ h1 {
   font-weight: 900;
 }
 
+.rank-heading {
+  display: grid;
+  gap: 5px;
+}
+
+.rank-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rank-heading h1 {
+  flex: 0 0 auto;
+}
+
+.rank-heading p:not(.eyebrow) {
+  max-width: 390px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
 .rank-summary {
   min-height: 78px;
   display: grid;
@@ -2556,6 +2580,12 @@ h1 {
   .rank-leaderboard-row {
     align-items: start;
     flex-direction: column;
+  }
+
+  .rank-heading > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .mode-picker-modal .picker {

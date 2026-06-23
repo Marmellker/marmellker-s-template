@@ -590,14 +590,14 @@ const REVIEW_LIMIT = 700;
 const REVIEW_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 
 const RANKS: RankInfo[] = [
-  { title: 'Дерево', min: 0, max: 99, icon: '♣' },
-  { title: 'Камень', min: 100, max: 249, icon: '◆' },
-  { title: 'Бронза', min: 250, max: 449, icon: '▲' },
-  { title: 'Серебро', min: 450, max: 699, icon: '✦' },
-  { title: 'Золото', min: 700, max: 999, icon: '★' },
-  { title: 'Платина', min: 1000, max: 1349, icon: '✧' },
-  { title: 'Алмаз', min: 1350, max: 1749, icon: '◇' },
-  { title: 'Мастер', min: 1750, max: 2199, icon: '♛' },
+  { title: 'Дерево', min: 0, max: 149, icon: '♣' },
+  { title: 'Камень', min: 150, max: 449, icon: '◆' },
+  { title: 'Бронза', min: 450, max: 899, icon: '▲' },
+  { title: 'Серебро', min: 900, max: 1499, icon: '✦' },
+  { title: 'Золото', min: 1500, max: 2249, icon: '★' },
+  { title: 'Платина', min: 2250, max: 3149, icon: '✧' },
+  { title: 'Алмаз', min: 3150, max: 4199, icon: '◇' },
+  { title: 'Мастер', min: 4200, max: 5399, icon: '♛' },
 ];
 
 const QUEST_REWARDS: Record<QuestDifficulty, number> = {
@@ -6441,9 +6441,12 @@ export default function App() {
             aria-label="Ранги игрока"
             onClick={(event) => event.stopPropagation()}
           >
-            <div>
+            <div className="rank-heading">
               <p className="eyebrow">BeatShift</p>
-              <h1>Ранг</h1>
+              <div>
+                <h1>Ранг</h1>
+                <p>Очки: квесты + 50 за каждую полную минуту в бесконечном уровне.</p>
+              </div>
             </div>
 
             <div className="rank-summary">
