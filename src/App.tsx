@@ -583,6 +583,7 @@ const ORBIT_SPEED = 3.35;
 const INFINITE_DURATION = 24 * 60 * 60 * 1000;
 const INFINITE_SEGMENT_LENGTH = 2_200;
 const INFINITE_GENERATE_AHEAD = 2_800;
+const INFINITE_GENERATION_TIMEOUT_MS = 1_800;
 const BEAT_INTERVAL_MS = 520;
 const ADMIN_EMAIL = 'boldinar2@gmail.com';
 const REVIEW_LIMIT = 700;
@@ -1738,12 +1739,41 @@ function normalizeObstacle(obstacle: Partial<Obstacle>, fallbackX: number): Obst
   return { kind, direction, x, y, width, height, color };
 }
 
+function normalizeInfiniteObstacle(obstacle: Partial<Obstacle>, fallbackX: number, fromX: number): Obstacle {
+  const rawX = Number(obstacle.x);
+  const x =
+    Number.isFinite(rawX) && rawX > 0 && rawX < fromX - 180
+      ? fromX + rawX
+      : obstacle.x;
+  return normalizeObstacle({ ...obstacle, x }, fallbackX);
+}
+
 function normalizeOrb(orb: Partial<Orb>, fallbackX: number): Orb {
   return {
     x: Math.max(760, Number(orb.x) || fallbackX),
     y: clamp(Number(orb.y) || PLAYER_CENTER_Y, PLAYER_MIN_Y + 28, PLAYER_MAX_Y - 28),
     radius: clamp(Number(orb.radius) || 14, 10, 18),
   };
+}
+
+function normalizeInfiniteOrb(orb: Partial<Orb>, fallbackX: number, fromX: number): Orb {
+  const rawX = Number(orb.x);
+  const x =
+    Number.isFinite(rawX) && rawX > 0 && rawX < fromX - 180
+      ? fromX + rawX
+      : orb.x;
+  return normalizeOrb({ ...orb, x }, fallbackX);
+}
+
+function keepFutureInfiniteSegment(segment: { obstacles: Obstacle[]; orbs: Orb[] }, fromX: number) {
+  const minX = fromX + 80;
+  const maxX = fromX + INFINITE_SEGMENT_LENGTH + 360;
+  const obstacles = segment.obstacles.filter((obstacle) => obstacle.x + obstacle.width >= minX && obstacle.x <= maxX);
+  const orbs = segment.orbs.filter((orb) => orb.x + orb.radius >= minX && orb.x <= maxX);
+  const gateBlocks = obstacles.filter((obstacle) => (obstacle.kind ?? 'block') === 'block');
+
+  if (gateBlocks.length < 2) return null;
+  return { obstacles, orbs };
 }
 
 function buildFallbackInfiniteSegment(choice: Choice, _speedMode: SpeedMode, fromX: number, segmentLength = INFINITE_SEGMENT_LENGTH) {
@@ -1829,10 +1859,14 @@ function buildFallbackInfiniteSegment(choice: Choice, _speedMode: SpeedMode, fro
 }
 
 async function generateInfiniteSegment(choice: Choice, speedMode: SpeedMode, fromX: number) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), INFINITE_GENERATION_TIMEOUT_MS);
+
   try {
     const response = await fetch('/api/generate-level', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         mode: choice.mode,
         difficulty: 'hard',
@@ -1845,14 +1879,17 @@ async function generateInfiniteSegment(choice: Choice, speedMode: SpeedMode, fro
     if (!response.ok) throw new Error(`AI level request failed: ${response.status}`);
     const data = (await response.json()) as { obstacles?: Partial<Obstacle>[]; orbs?: Partial<Orb>[] };
     const obstacles = Array.isArray(data.obstacles)
-      ? data.obstacles.map((obstacle, index) => normalizeObstacle(obstacle, fromX + 260 + index * 48))
+      ? data.obstacles.map((obstacle, index) => normalizeInfiniteObstacle(obstacle, fromX + 260 + index * 48, fromX))
       : [];
     const orbs = Array.isArray(data.orbs)
-      ? data.orbs.map((orb, index) => normalizeOrb(orb, fromX + 360 + index * 120))
+      ? data.orbs.map((orb, index) => normalizeInfiniteOrb(orb, fromX + 360 + index * 120, fromX))
       : [];
-    if (obstacles.length > 0) return { obstacles, orbs };
+    const segment = keepFutureInfiniteSegment({ obstacles, orbs }, fromX);
+    if (segment) return segment;
   } catch {
     // Локально Vite не поднимает Vercel route, поэтому оставляем быстрый встроенный генератор.
+  } finally {
+    window.clearTimeout(timeout);
   }
 
   return buildFallbackInfiniteSegment(choice, speedMode, fromX);
@@ -4479,9 +4516,6 @@ export default function App() {
     setInfiniteLoading(true);
     const infiniteChoice: Choice = { mode: modeOverride ?? choice.mode, difficulty: 'hard' };
     const infiniteSpeedMode: SpeedMode = 'normal';
-    if (audioSettings.levelMusic) {
-      startSoundtrack(infiniteChoice, infiniteSpeedMode, { infinite: true });
-    }
     const firstSegment = await generateInfiniteSegment(infiniteChoice, infiniteSpeedMode, 900);
     const nextLevel = createInfiniteLevel(infiniteChoice, infiniteSpeedMode, firstSegment);
     clearPausedRun();
