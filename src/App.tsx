@@ -1517,17 +1517,26 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   const spacing = splitMode ? 560 : isFlipWave ? 520 : isLaser ? 460 : isOrbit ? 500 : choice.mode === 'wave' ? 410 : choice.mode === 'ship' ? 470 : 440;
   const width = splitMode ? 54 + difficulty.multiplier * 12 : isFlipWave || isOrbit ? 54 + difficulty.multiplier * 12 : 62 + difficulty.multiplier * 20;
   const hardUfoSpikeCoverSections = new Set([0.46, 0.62].map((progress) => Math.round((levelLength * progress - 920) / spacing)));
-  const mediumOrbitReworkSection = Math.round((levelLength * 0.32 - 920) / spacing);
+  const mediumOrbitWideGateSection = Math.round((levelLength * 0.32 - 920) / spacing);
+  const mediumOrbitReliefSection = Math.round((levelLength * 0.57 - 920) / spacing);
 
   for (let x = 920; x < levelLength - 900; x += spacing) {
     const section = Math.round((x - 920) / spacing);
-    const mediumOrbitRework = choice.mode === 'orbit' && choice.difficulty === 'medium' && section === mediumOrbitReworkSection;
+    const mediumOrbit = !splitMode && isOrbit && choice.difficulty === 'medium';
+    const mediumOrbitWideGate = mediumOrbit && section === mediumOrbitWideGateSection;
+    const mediumOrbitRelief = mediumOrbit && section === mediumOrbitReliefSection;
     const splitGap = choice.difficulty === 'hard' ? 248 : choice.difficulty === 'medium' ? 270 : 296;
     const flipGap = choice.difficulty === 'hard' ? 176 : choice.difficulty === 'medium' ? 202 : 230;
-    const orbitGap = choice.difficulty === 'hard' ? 182 : choice.difficulty === 'medium' ? (mediumOrbitRework ? 242 : 210) : 238;
+    const orbitGap =
+      choice.difficulty === 'hard'
+        ? 182
+        : choice.difficulty === 'medium'
+          ? mediumOrbitWideGate || mediumOrbitRelief
+            ? 246
+            : 210
+          : 238;
     const normalGap = Math.max(96, 198 - difficulty.multiplier * 44 - random() * 26);
     const hardUfoEase = choice.mode === 'ufo' && choice.difficulty === 'hard';
-    const mediumOrbit = !splitMode && isOrbit && choice.difficulty === 'medium';
     const ufoGap = normalGap + (hardUfoEase ? 34 : 24);
     const gap = splitMode ? splitGap : isFlipWave ? flipGap : isOrbit ? orbitGap : choice.mode === 'ufo' ? ufoGap : normalGap;
     const splitWave = Math.sin(x / 980) * (choice.difficulty === 'hard' ? 40 : 30);
@@ -1567,7 +1576,7 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       orbs.push({ x: x + spacing * 0.45, y: 150 + random() * 240, radius: 14 });
     }
 
-    if (random() > (splitMode ? 0.66 : isFlipWave || isOrbit ? 0.68 : choice.difficulty === 'easy' ? 0.48 : 0.26)) {
+    if (!mediumOrbitRelief && random() > (splitMode ? 0.66 : isFlipWave || isOrbit ? 0.68 : choice.difficulty === 'easy' ? 0.48 : 0.26)) {
       const spikeCount = choice.difficulty === 'hard' ? 4 : choice.difficulty === 'medium' ? 3 : 2;
       const spikeHeight = splitMode ? 26 + difficulty.multiplier * 6 : 32 + difficulty.multiplier * 10;
       const spikeWidth = 38 + difficulty.multiplier * 8;
@@ -1613,7 +1622,8 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       });
     }
 
-    const shouldAddOrbitBlock = !splitMode && isOrbit && choice.difficulty !== 'easy' ? random() > (mediumOrbit ? 0.34 : 0.58) : false;
+    const shouldAddOrbitBlock =
+      !mediumOrbitRelief && !splitMode && isOrbit && choice.difficulty !== 'easy' ? random() > (mediumOrbit ? 0.34 : 0.58) : false;
     const orbitBlockX = shouldAddOrbitBlock ? x + spacing * (0.44 + random() * 0.18) : 0;
     const orbitBlockY = shouldAddOrbitBlock ? 156 + random() * 210 : 0;
     const orbitBlockHeight = shouldAddOrbitBlock ? 36 + random() * 34 : 0;
@@ -1627,7 +1637,8 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       });
     }
 
-    const shouldAddSaw = random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
+    const shouldAddSaw =
+      !mediumOrbitRelief && random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
     if (shouldAddSaw) {
       const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
       const sawX = x + spacing * (0.46 + random() * 0.22);
@@ -1642,7 +1653,8 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
       });
     }
 
-    const shouldAddSpikedBlock = random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
+    const shouldAddSpikedBlock =
+      !mediumOrbitRelief && random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
     if (shouldAddSpikedBlock) {
       const spikedBlockX = x + spacing * (0.3 + random() * 0.35);
       const spikedBlockY = splitMode ? 218 + random() * 80 : isFlipWave || isOrbit ? 164 + random() * 190 : 132 + random() * 230;
@@ -3725,6 +3737,21 @@ export default function App() {
     activeMusicRef.current = null;
   }, []);
 
+  const pauseSoundtrackPlayback = useCallback(() => {
+    const activeMusic = activeMusicRef.current;
+    if (activeMusic?.kind === 'file') {
+      activeMusic.audio.pause();
+    }
+  }, []);
+
+  const resumeSoundtrackPlayback = useCallback(() => {
+    const activeMusic = activeMusicRef.current;
+    if (activeMusic?.kind === 'file' && activeMusic.audio.paused) {
+      activeMusic.audio.volume = activeMusic.targetVolume;
+      void activeMusic.audio.play().catch(() => undefined);
+    }
+  }, []);
+
   const startSoundtrack = useCallback(
     (
       trackChoice: Choice,
@@ -4590,6 +4617,7 @@ export default function App() {
     deathAnimationRef.current = null;
     winAnimationRef.current = null;
     saveCurrentRun();
+    pauseSoundtrackPlayback();
     setScreen('paused');
   };
 
@@ -4598,6 +4626,7 @@ export default function App() {
     lastTimeRef.current = 0;
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
+    resumeSoundtrackPlayback();
     setScreen('playing');
   };
 
@@ -4760,17 +4789,16 @@ export default function App() {
   useEffect(() => () => stopMenuMusic(), [stopMenuMusic]);
 
   useEffect(() => {
-    if (screen !== 'playing' || !audioSettings.levelMusic) {
+    if ((screen !== 'playing' && screen !== 'paused') || !audioSettings.levelMusic) {
       stopSoundtrack();
       return;
     }
 
     if (activeMusicRef.current) {
-      return () => stopSoundtrack();
+      return;
     }
 
     startSoundtrack(choice, speedMode, { infinite: infiniteMode });
-    return () => stopSoundtrack();
   }, [audioSettings.levelMusic, choice, infiniteMode, screen, speedMode, startSoundtrack, stopSoundtrack]);
 
   useEffect(() => {
