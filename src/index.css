@@ -645,7 +645,7 @@ canvas {
     transform 220ms ease;
 }
 
-.menu-panel > div:first-child,
+.menu-title,
 .difficulty-row,
 .menu-panel > .start-button,
 .menu-panel > .infinite-button,
@@ -688,7 +688,7 @@ canvas {
   grid-column: 5;
 }
 
-.menu-panel > div:first-child {
+.menu-title {
   text-align: center;
 }
 
