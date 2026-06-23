@@ -179,6 +179,15 @@ type LeaderboardEntry = {
   seconds: number;
 };
 
+type FeedbackReview = {
+  id: string;
+  user_id: string;
+  email: string | null;
+  nickname: string | null;
+  body: string;
+  created_at: string;
+};
+
 type ColorSettings = Record<Mode | 'trail', string>;
 
 type HomePreview = {
@@ -526,6 +535,8 @@ const ORBIT_SPEED = 3.35;
 const INFINITE_DURATION = 24 * 60 * 60 * 1000;
 const INFINITE_SEGMENT_LENGTH = 2_200;
 const INFINITE_GENERATE_AHEAD = 2_800;
+const ADMIN_EMAIL = 'boldinar2@gmail.com';
+const REVIEW_LIMIT = 700;
 
 function pickDifferent<T>(items: T[], previous?: T) {
   const variants = previous === undefined ? items : items.filter((item) => item !== previous);
@@ -718,6 +729,16 @@ function formatDuration(seconds: number) {
   const minutes = Math.floor(rounded / 60);
   const restSeconds = rounded % 60;
   return minutes > 0 ? `${minutes} мин. ${restSeconds} сек.` : `${restSeconds} сек.`;
+}
+
+function formatReviewDate(value: string) {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function getFallbackNickname(user: User) {
@@ -2802,6 +2823,14 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewMessage, setReviewMessage] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [ownReviews, setOwnReviews] = useState<FeedbackReview[]>([]);
+  const [adminReviewsOpen, setAdminReviewsOpen] = useState(false);
+  const [adminReviews, setAdminReviews] = useState<FeedbackReview[]>([]);
+  const [adminReviewsLoading, setAdminReviewsLoading] = useState(false);
 
   useEffect(() => {
     screenRef.current = screen;
@@ -2818,6 +2847,7 @@ export default function App() {
   const previewMode = MODES.find((mode) => mode.id === homePreview.choice.mode) ?? MODES[0];
   const userEmail = session?.user.email ?? '';
   const visibleNickname = nickname.trim() || (session ? getFallbackNickname(session.user) : '');
+  const isAdmin = session?.user.email?.toLowerCase() === ADMIN_EMAIL;
 
   const loadAccountNickname = useCallback(async (user: User) => {
     if (!supabase) {
@@ -2833,6 +2863,96 @@ export default function App() {
     }
     setNickname(data?.display_name?.trim() || getFallbackNickname(user));
   }, []);
+
+  const loadOwnReviews = useCallback(async () => {
+    if (!session || !supabase) {
+      setOwnReviews([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('feedback_reviews')
+      .select('id, user_id, email, nickname, body, created_at')
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) {
+      setReviewMessage('Не удалось загрузить отзывы.');
+      setOwnReviews([]);
+    } else {
+      setOwnReviews((data ?? []) as FeedbackReview[]);
+    }
+  }, [session]);
+
+  const openReviewModal = useCallback(() => {
+    setReviewOpen(true);
+    setReviewMessage('');
+    setReviewText('');
+    void loadOwnReviews();
+  }, [loadOwnReviews]);
+
+  const submitReview = useCallback(async () => {
+    const body = reviewText.trim();
+    if (!session) {
+      setReviewMessage('Войдите в аккаунт, чтобы оставить отзыв.');
+      return;
+    }
+    if (!supabase) {
+      setReviewMessage('Supabase не настроен.');
+      return;
+    }
+    if (body.length === 0) {
+      setReviewMessage('Напишите отзыв.');
+      return;
+    }
+    if (body.length > REVIEW_LIMIT) {
+      setReviewMessage(`Максимум ${REVIEW_LIMIT} символов.`);
+      return;
+    }
+
+    setReviewBusy(true);
+    setReviewMessage('');
+    const { error } = await supabase.from('feedback_reviews').insert({
+      user_id: session.user.id,
+      email: session.user.email ?? null,
+      nickname: visibleNickname || null,
+      body,
+    });
+    setReviewBusy(false);
+
+    if (error) {
+      setReviewMessage('Не удалось сохранить отзыв.');
+    } else {
+      setReviewText('');
+      setReviewMessage('Отзыв сохранён.');
+      void loadOwnReviews();
+    }
+  }, [loadOwnReviews, reviewText, session, visibleNickname]);
+
+  const loadAdminReviews = useCallback(async () => {
+    if (!isAdmin || !supabase) return;
+
+    setAdminReviewsLoading(true);
+    const { data, error } = await supabase
+      .from('feedback_reviews')
+      .select('id, user_id, email, nickname, body, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    setAdminReviewsLoading(false);
+
+    if (error) {
+      setAdminReviews([]);
+    } else {
+      setAdminReviews((data ?? []) as FeedbackReview[]);
+    }
+  }, [isAdmin]);
+
+  const openAdminReviews = useCallback(() => {
+    if (!isAdmin) return;
+    setAdminReviewsOpen(true);
+    void loadAdminReviews();
+  }, [isAdmin, loadAdminReviews]);
 
   const loadLeaderboard = useCallback(async (mode: Mode) => {
     setLeaderboardMode(mode);
@@ -3468,6 +3588,10 @@ export default function App() {
     setLeaderboardEntries([]);
     setLeaderboardListOpen(false);
     setGuestInfiniteNoticeOpen(false);
+    setReviewOpen(false);
+    setAdminReviewsOpen(false);
+    setOwnReviews([]);
+    setAdminReviews([]);
     closeAuth();
     setScreen('home');
   };
@@ -4723,7 +4847,7 @@ export default function App() {
             className={[
               'home-preview',
               homePreviewTransitioning ? 'home-preview-switching' : '',
-              authMode ? 'home-panel-blurred' : '',
+              authMode || reviewOpen || adminReviewsOpen ? 'home-panel-blurred' : '',
             ]
               .filter(Boolean)
               .join(' ')}
@@ -4739,7 +4863,10 @@ export default function App() {
             </div>
           </section>
 
-          <section className={authMode ? 'home-auth home-panel-blurred' : 'home-auth'} aria-label="Главный экран">
+          <section
+            className={authMode || reviewOpen || adminReviewsOpen ? 'home-auth home-panel-blurred' : 'home-auth'}
+            aria-label="Главный экран"
+          >
             <div>
               <p className="eyebrow home-title">BeatShift</p>
               <h1>Выбери вход</h1>
@@ -4754,6 +4881,14 @@ export default function App() {
               <button className="auth-button" onClick={continueAsGuest} type="button">
                 Играть без аккаунта
               </button>
+              <button className="auth-button" onClick={openReviewModal} type="button">
+                Оставить отзыв
+              </button>
+              {isAdmin && (
+                <button className="auth-button" onClick={openAdminReviews} type="button">
+                  Админ панель
+                </button>
+              )}
             </div>
           </section>
         </>
@@ -4803,6 +4938,85 @@ export default function App() {
             </div>
             {authMessage && <p className="auth-message">{authMessage}</p>}
           </form>
+        </div>
+      )}
+
+      {screen === 'home' && reviewOpen && (
+        <div
+          className={modalClosing ? 'modal-backdrop auth-modal-backdrop modal-closing' : 'modal-backdrop auth-modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setReviewOpen(false))}
+          role="presentation"
+        >
+          <section className="auth-form review-modal" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Отзыв</h1>
+            </div>
+            <textarea
+              maxLength={REVIEW_LIMIT}
+              onChange={(event) => setReviewText(event.target.value)}
+              placeholder="Напиши отзыв"
+              value={reviewText}
+            />
+            <div className="review-meta">
+              <span>{reviewText.length}/{REVIEW_LIMIT}</span>
+              {reviewMessage && <strong>{reviewMessage}</strong>}
+            </div>
+            <div className="auth-form-actions">
+              <button className="auth-button primary" disabled={reviewBusy} onClick={submitReview} type="button">
+                {reviewBusy ? '...' : 'Отправить'}
+              </button>
+              <button className="auth-button" onClick={() => closeModalWithFade(() => setReviewOpen(false))} type="button">
+                Закрыть
+              </button>
+            </div>
+
+            <div className="review-list">
+              <h2>Мои отзывы</h2>
+              {!session && <p>Войдите, чтобы видеть и сохранять свои отзывы.</p>}
+              {session && ownReviews.length === 0 && <p>Пока нет отзывов.</p>}
+              {session &&
+                ownReviews.map((review) => (
+                  <article className="review-item" key={review.id}>
+                    <time>{formatReviewDate(review.created_at)}</time>
+                    <p>{review.body}</p>
+                  </article>
+                ))}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {screen === 'home' && isAdmin && adminReviewsOpen && (
+        <div
+          className={modalClosing ? 'modal-backdrop auth-modal-backdrop modal-closing' : 'modal-backdrop auth-modal-backdrop'}
+          onClick={() => closeModalWithFade(() => setAdminReviewsOpen(false))}
+          role="presentation"
+        >
+          <section className="auth-form review-modal admin-reviews-modal" onClick={(event) => event.stopPropagation()}>
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Отзывы</h1>
+            </div>
+            <div className="review-list admin-review-list">
+              {adminReviewsLoading && <p>Загрузка...</p>}
+              {!adminReviewsLoading && adminReviews.length === 0 && <p>Пока нет отзывов.</p>}
+              {!adminReviewsLoading &&
+                adminReviews.map((review) => (
+                  <article className="review-item" key={review.id}>
+                    <header>
+                      <strong>{review.nickname || review.email || 'Пользователь'}</strong>
+                      <time>{formatReviewDate(review.created_at)}</time>
+                    </header>
+                    <small>{review.email || review.user_id}</small>
+                    <p>{review.body}</p>
+                  </article>
+                ))}
+            </div>
+            <button className="auth-button" onClick={() => closeModalWithFade(() => setAdminReviewsOpen(false))} type="button">
+              Закрыть
+            </button>
+          </section>
         </div>
       )}
 
