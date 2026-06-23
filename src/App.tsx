@@ -4740,12 +4740,11 @@ export default function App() {
   };
 
   const pauseRun = () => {
+    if (deathAnimationRef.current || winAnimationRef.current) return;
     playSound('pause');
     inputRef.current = false;
     ufoJumpQueuedRef.current = false;
     practiceRespawnUntilRef.current = 0;
-    deathAnimationRef.current = null;
-    winAnimationRef.current = null;
     saveCurrentRun();
     pauseSoundtrackPlayback();
     setScreen('paused');
@@ -4921,6 +4920,10 @@ export default function App() {
   useEffect(() => {
     if ((screen !== 'playing' && screen !== 'paused') || !audioSettings.levelMusic) {
       stopSoundtrack();
+      return;
+    }
+
+    if (screen === 'paused' && (deathAnimationRef.current || winAnimationRef.current)) {
       return;
     }
 
