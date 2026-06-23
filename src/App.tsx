@@ -1295,17 +1295,17 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
   }
 
   if (!splitMode && choice.mode === 'orbit' && choice.difficulty === 'medium') {
-    const spacing = 500;
-    const width = 66;
-    const centers = [270, 226, 318, 252, 344, 286, 206, 238, 328, 356, 292, 218];
+    const spacing = 430;
+    const width = 60;
+    const centers = [270, 214, 336, 236, 354, 286, 196, 248, 332, 368, 278, 208, 346, 226, 306, 188];
 
     for (let x = 920; x < levelLength - 900; x += spacing) {
       const section = Math.floor((x - 920) / spacing);
       const center =
         centers[section % centers.length] +
-        Math.sin(section * 0.64) * 12 +
-        Math.sin(x / 840) * 10;
-      const gap = 220 + Math.sin(section * 0.72) * 10 + (section % 9 === 5 ? 16 : 0);
+        Math.sin(section * 1.08) * 14 +
+        Math.sin(x / 520) * 8;
+      const gap = 214 + Math.sin(section * 0.9) * 8 + (section % 8 === 5 ? 14 : 0);
       const topHeight = Math.max(58, center - gap / 2);
       const bottomY = Math.min(HEIGHT - 76, center + gap / 2);
       const bottomHeight = HEIGHT - bottomY - 52;
@@ -1319,19 +1319,27 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
         const minY = Math.min(HEIGHT - 52 - height, bottomY + 6);
         return clamp(bottomY + padding, minY, HEIGHT - 52 - height);
       };
+      const placeGateEdgeObstacle = (height: number, side: 'top' | 'bottom', inset = 14) => {
+        if (side === 'top') {
+          return clamp(topHeight + inset, topHeight + 6, bottomY - height - 76);
+        }
+
+        return clamp(bottomY - height - inset, topHeight + 76, bottomY - height - 6);
+      };
 
       obstacles.push({ x, y: 0, width, height: topHeight, color });
       obstacles.push({ x, y: bottomY, width, height: bottomHeight, color });
 
-      if (section % 3 === 0) {
-        const spikeHeight = 40;
-        const spikeWidth = 46;
-        const fromTop = section % 2 === 1;
-        for (let index = 0; index < 3; index += 1) {
+      if (section % 2 === 0 || section % 5 === 3) {
+        const spikeHeight = 38;
+        const spikeWidth = 42;
+        const fromTop = section % 4 === 1 || section % 4 === 2;
+        const spikeCount = section % 6 === 0 ? 3 : 2;
+        for (let index = 0; index < spikeCount; index += 1) {
           obstacles.push({
             kind: 'spike',
             direction: fromTop ? 'down' : 'up',
-            x: x + 78 + index * (spikeWidth + 8),
+            x: x + 58 + index * (spikeWidth + 8),
             y: fromTop ? 0 : HEIGHT - 52 - spikeHeight,
             width: spikeWidth,
             height: spikeHeight,
@@ -1340,41 +1348,53 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
         }
       }
 
-      if (section % 3 !== 1) {
-        const blockHeight = 38;
-        const side = section % 4 < 2 ? 'top' : 'bottom';
+      if (section % 4 !== 1) {
+        const blockHeight = 30;
+        const side = section % 3 === 0 ? 'bottom' : 'top';
         obstacles.push({
-          x: x + 214,
-          y: placeOutsideGate(blockHeight, side),
-          width: 48,
+          x: x + 164,
+          y: placeGateEdgeObstacle(blockHeight, side, 12),
+          width: 44,
           height: blockHeight,
           color: '#3d2c8d',
         });
       }
 
-      if (section % 2 === 0) {
-        const sawSize = 40;
-        const side = section % 4 === 0 ? 'bottom' : 'top';
+      if (section % 3 !== 2) {
+        const sawSize = 34;
+        const side = section % 4 === 0 || section % 4 === 3 ? 'bottom' : 'top';
         obstacles.push({
           kind: 'saw',
-          x: x + 318,
-          y: placeOutsideGate(sawSize, side, 20),
+          x: x + 258,
+          y: placeGateEdgeObstacle(sawSize, side, 16),
           width: sawSize,
           height: sawSize,
           color: '#d9e2ec',
         });
       }
 
-      if (section % 7 === 2 || section % 7 === 5 || section % 7 === 6) {
-        const blockSize = 52;
-        const side = section % 2 === 0 ? 'top' : 'bottom';
+      if (section % 5 === 1 || section % 5 === 3) {
+        const blockSize = 42;
+        const side = section % 2 === 0 ? 'bottom' : 'top';
         obstacles.push({
           kind: 'spikedBlock',
-          x: x + 414,
-          y: placeOutsideGate(blockSize, side, 18),
-          width: 54,
+          x: x + 348,
+          y: placeGateEdgeObstacle(blockSize, side, 10),
+          width: 46,
           height: blockSize,
           color: '#6842c2',
+        });
+      }
+
+      if (section % 8 === 6) {
+        const sawSize = 32;
+        obstacles.push({
+          kind: 'saw',
+          x: x + 382,
+          y: placeOutsideGate(sawSize, section % 4 === 2 ? 'top' : 'bottom', 24),
+          width: sawSize,
+          height: sawSize,
+          color: '#d9e2ec',
         });
       }
     }
