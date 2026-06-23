@@ -1468,6 +1468,10 @@ h1 {
   animation: modalPopIn 220ms ease both;
 }
 
+.leaderboard-list-panel {
+  width: min(560px, calc(100vw - 48px));
+}
+
 .records-panel {
   width: min(860px, calc(100vw - 48px));
   animation: modalPopIn 220ms ease both;
@@ -1643,6 +1647,12 @@ h1 {
   background: var(--panel-solid);
   color: var(--muted);
   font-weight: 800;
+}
+
+.leaderboard-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .mods-list {

@@ -2793,6 +2793,7 @@ export default function App() {
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardMessage, setLeaderboardMessage] = useState('');
+  const [leaderboardListOpen, setLeaderboardListOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -3458,6 +3459,7 @@ export default function App() {
     setSession(null);
     setNickname('');
     setLeaderboardEntries([]);
+    setLeaderboardListOpen(false);
     closeAuth();
     setScreen('home');
   };
@@ -3836,6 +3838,7 @@ export default function App() {
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
+    setLeaderboardListOpen(false);
     setMenuAnimationDisabled(false);
     setInfiniteMode(false);
     setInfiniteLevel(null);
@@ -3858,6 +3861,7 @@ export default function App() {
     setSpeedPickerOpen(false);
     setDifficultyPickerOpen(false);
     setControlsPickerOpen(false);
+    setLeaderboardListOpen(false);
     setMenuAnimationDisabled(true);
     setInfiniteMode(false);
     setInfiniteLevel(null);
@@ -5066,7 +5070,8 @@ export default function App() {
               setSpeedPickerOpen(false);
               setDifficultyPickerOpen(false);
               setControlsPickerOpen(false);
-              void loadLeaderboard(choice.mode);
+              setLeaderboardListOpen(false);
+              setLeaderboardMode(choice.mode);
               setScreen('leaderboard');
             }}
             title="Лидерборд"
@@ -5404,7 +5409,7 @@ export default function App() {
         </div>
       )}
 
-      {screen === 'leaderboard' && (
+      {screen === 'leaderboard' && !leaderboardListOpen && (
         <div
           className={
             modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
@@ -5427,7 +5432,10 @@ export default function App() {
                 <button
                   className={leaderboardMode === mode.id ? 'leaderboard-mode active' : 'leaderboard-mode'}
                   key={mode.id}
-                  onClick={() => void loadLeaderboard(mode.id)}
+                  onClick={() => {
+                    setLeaderboardListOpen(true);
+                    void loadLeaderboard(mode.id);
+                  }}
                   type="button"
                 >
                   <ModeTitle mode={mode.id} title={mode.title} />
@@ -5435,6 +5443,26 @@ export default function App() {
               ))}
             </div>
 
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'leaderboard' && leaderboardListOpen && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel leaderboard-panel leaderboard-list-panel"
+            aria-label="Список лидерборда бесконечного уровня"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="leaderboard-list">
               <h2>{MODES.find((mode) => mode.id === leaderboardMode)?.title ?? 'Режим'}</h2>
               {leaderboardLoading && <p className="leaderboard-empty">Загрузка...</p>}
@@ -5454,9 +5482,14 @@ export default function App() {
                 ))}
             </div>
 
-            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
-              Закрыть
-            </button>
+            <div className="leaderboard-actions">
+              <button className="menu-button" onClick={() => setLeaderboardListOpen(false)} type="button">
+                Режимы
+              </button>
+              <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+                Закрыть
+              </button>
+            </div>
           </section>
         </div>
       )}
