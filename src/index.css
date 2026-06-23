@@ -91,7 +91,8 @@ button {
 .game-shell.colors,
 .game-shell.mods,
 .game-shell.records,
-.game-shell.infiniteRecords {
+.game-shell.infiniteRecords,
+.game-shell.leaderboard {
   grid-template-columns: minmax(300px, 560px);
   justify-content: center;
 }
@@ -671,6 +672,10 @@ canvas {
   align-self: center;
 }
 
+.menu-panel > .menu-nickname-row {
+  grid-column: 5;
+}
+
 .menu-panel > .menu-back-button {
   grid-column: 5;
 }
@@ -872,6 +877,38 @@ h1 {
   white-space: nowrap;
 }
 
+.menu-nickname-row {
+  min-height: 76px;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(13, 18, 31, 0.66);
+  backdrop-filter: blur(12px);
+}
+
+.menu-nickname-row span,
+.menu-nickname-row small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.menu-nickname-row input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: rgba(8, 11, 18, 0.72);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .menu-account-button {
   min-height: 30px;
   border: 1px solid var(--line);
@@ -962,6 +999,44 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
+.leaderboard-menu-button {
+  min-height: 76px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: rgba(13, 18, 31, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.podium-icon {
+  width: 42px;
+  height: 36px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 4px;
+}
+
+.podium-icon span {
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 5px 5px 3px 3px;
+  background: linear-gradient(180deg, #facc15, #39d0ff);
+  box-shadow: 0 0 16px rgba(57, 208, 255, 0.22);
+}
+
+.podium-icon span:nth-child(1) {
+  height: 20px;
+}
+
+.podium-icon span:nth-child(2) {
+  height: 32px;
+}
+
+.podium-icon span:nth-child(3) {
+  height: 25px;
+}
+
 .menu-action-row .mode-trigger span {
   font-size: 15px;
 }
@@ -1023,7 +1098,8 @@ h1 {
 .modal-backdrop.modal-closing .colors-panel,
 .modal-backdrop.modal-closing .mods-panel,
 .modal-backdrop.modal-closing .records-panel,
-.modal-backdrop.modal-closing .infinite-records-panel {
+.modal-backdrop.modal-closing .infinite-records-panel,
+.modal-backdrop.modal-closing .leaderboard-panel {
   animation: modalPopOut 180ms ease both;
 }
 
@@ -1353,6 +1429,11 @@ h1 {
   animation: modalPopIn 220ms ease both;
 }
 
+.leaderboard-panel {
+  width: min(760px, calc(100vw - 48px));
+  animation: modalPopIn 220ms ease both;
+}
+
 .records-panel {
   width: min(860px, calc(100vw - 48px));
   animation: modalPopIn 220ms ease both;
@@ -1456,6 +1537,78 @@ h1 {
   color: var(--ink);
   font-size: 22px;
   font-weight: 900;
+}
+
+.leaderboard-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.leaderboard-mode {
+  min-height: 66px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.leaderboard-mode.active {
+  border-color: rgba(57, 208, 255, 0.58);
+  background: rgba(57, 208, 255, 0.12);
+}
+
+.leaderboard-list {
+  display: grid;
+  gap: 10px;
+}
+
+.leaderboard-list h2 {
+  margin: 2px 0 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.leaderboard-row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+}
+
+.leaderboard-row span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-row strong {
+  flex: 0 0 auto;
+  color: var(--good);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.leaderboard-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .mods-list {
@@ -1668,6 +1821,10 @@ h1 {
     grid-column: 2;
   }
 
+  .menu-panel > .menu-nickname-row {
+    grid-column: 3;
+  }
+
   .menu-panel > .menu-back-button {
     grid-column: 3;
   }
@@ -1676,7 +1833,8 @@ h1 {
     grid-column: 1 / -1;
   }
 
-  .menu-action-row .practice-menu-button {
+  .menu-action-row .practice-menu-button,
+  .leaderboard-menu-button {
     grid-column: auto;
   }
 
@@ -1735,10 +1893,12 @@ h1 {
   .menu-panel > .infinite-button,
   .menu-panel > .menu-button,
   .menu-panel > .controls-menu-button,
+  .menu-panel > .menu-nickname-row,
   .menu-panel > .score-row,
   .tutorial-menu-actions,
   .secondary-action-row,
-  .menu-action-row .practice-menu-button {
+  .menu-action-row .practice-menu-button,
+  .leaderboard-menu-button {
     grid-column: 1;
   }
 
@@ -1749,6 +1909,10 @@ h1 {
 
   .records-mode-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .leaderboard-mode-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mode-picker-modal .picker {
@@ -1779,7 +1943,8 @@ h1 {
 .game-shell.colors,
 .game-shell.mods,
 .game-shell.records,
-.game-shell.infiniteRecords {
+.game-shell.infiniteRecords,
+.game-shell.leaderboard {
   min-height: 100dvh;
   place-items: center;
   align-content: center;

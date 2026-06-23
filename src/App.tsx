@@ -37,7 +37,8 @@ type Screen =
   | 'colors'
   | 'mods'
   | 'records'
-  | 'infiniteRecords';
+  | 'infiniteRecords'
+  | 'leaderboard';
 type AuthMode = 'signin' | 'signup';
 type SoundName =
   | 'click'
@@ -169,6 +170,14 @@ type TeleportEffect = {
 };
 
 type RecordMap = Record<string, number>;
+
+type LeaderboardEntry = {
+  id: string;
+  user_id: string;
+  mode: Mode;
+  nickname: string;
+  seconds: number;
+};
 
 type ColorSettings = Record<Mode | 'trail', string>;
 
@@ -702,6 +711,24 @@ function saveInfiniteRecord(mode: Mode, seconds: number) {
   const next = Math.max(records[key] ?? 0, Math.round(seconds));
   window.localStorage.setItem(INFINITE_RECORD_KEY, JSON.stringify({ ...records, [key]: next }));
   return next;
+}
+
+function formatDuration(seconds: number) {
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const restSeconds = rounded % 60;
+  return minutes > 0 ? `${minutes} мин. ${restSeconds} сек.` : `${restSeconds} сек.`;
+}
+
+function getFallbackNickname(user: User) {
+  const metadata = user.user_metadata;
+  return (
+    metadata.full_name ??
+    metadata.name ??
+    metadata.user_name ??
+    user.email?.split('@')[0] ??
+    'Игрок'
+  ).toString();
 }
 
 function loadColors(): ColorSettings {
@@ -2670,14 +2697,18 @@ function updatePlayer(
 async function saveAccount(user: User) {
   if (!supabase) return;
 
-  const metadata = user.user_metadata;
+  const { data: currentAccount } = await supabase
+    .from('accounts')
+    .select('display_name')
+    .eq('id', user.id)
+    .maybeSingle();
   const provider = user.app_metadata.provider;
   const { error } = await supabase.from('accounts').upsert(
     {
       id: user.id,
       email: user.email ?? null,
-      display_name: metadata.full_name ?? metadata.name ?? metadata.user_name ?? null,
-      avatar_url: metadata.avatar_url ?? metadata.picture ?? null,
+      display_name: currentAccount?.display_name ?? getFallbackNickname(user),
+      avatar_url: user.user_metadata.avatar_url ?? user.user_metadata.picture ?? null,
       provider: typeof provider === 'string' ? provider : null,
       last_sign_in_at: user.last_sign_in_at ?? null,
       updated_at: new Date().toISOString(),
@@ -2756,6 +2787,12 @@ export default function App() {
   const [modalClosing, setModalClosing] = useState(false);
   const [checkpointButtonActive, setCheckpointButtonActive] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
+  const [nickname, setNickname] = useState('');
+  const [nicknameMessage, setNicknameMessage] = useState('');
+  const [leaderboardMode, setLeaderboardMode] = useState<Mode>('wave');
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardMessage, setLeaderboardMessage] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -2772,6 +2809,121 @@ export default function App() {
   const selectedDifficulty = DIFFICULTIES.find((difficulty) => difficulty.id === choice.difficulty) ?? DIFFICULTIES[0];
   const previewMode = MODES.find((mode) => mode.id === homePreview.choice.mode) ?? MODES[0];
   const userEmail = session?.user.email ?? '';
+  const visibleNickname = nickname.trim() || (session ? getFallbackNickname(session.user) : '');
+
+  const loadAccountNickname = useCallback(async (user: User) => {
+    if (!supabase) {
+      setNickname(getFallbackNickname(user));
+      return;
+    }
+
+    const { data, error } = await supabase.from('accounts').select('display_name').eq('id', user.id).maybeSingle();
+    if (error) {
+      console.warn('Не удалось загрузить никнейм:', error.message);
+      setNickname(getFallbackNickname(user));
+      return;
+    }
+    setNickname(data?.display_name?.trim() || getFallbackNickname(user));
+  }, []);
+
+  const loadLeaderboard = useCallback(async (mode: Mode) => {
+    setLeaderboardMode(mode);
+    setLeaderboardLoading(true);
+    setLeaderboardMessage('');
+
+    if (!supabase) {
+      setLeaderboardEntries([]);
+      setLeaderboardMessage('Supabase не настроен.');
+      setLeaderboardLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('infinite_leaderboard')
+      .select('id, user_id, mode, nickname, seconds')
+      .eq('mode', mode)
+      .order('seconds', { ascending: false })
+      .limit(10);
+
+    if (error) {
+      setLeaderboardEntries([]);
+      setLeaderboardMessage('Не удалось загрузить лидерборд.');
+    } else {
+      setLeaderboardEntries((data ?? []) as LeaderboardEntry[]);
+    }
+    setLeaderboardLoading(false);
+  }, []);
+
+  const updateNickname = useCallback(async () => {
+    if (!session || !supabase) return;
+    const nextNickname = nickname.trim().slice(0, 24);
+    if (!nextNickname) {
+      setNicknameMessage('Никнейм не может быть пустым.');
+      return;
+    }
+
+    setNickname(nextNickname);
+    setNicknameMessage('');
+    const { error } = await supabase.from('accounts').upsert(
+      {
+        id: session.user.id,
+        email: session.user.email ?? null,
+        display_name: nextNickname,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' },
+    );
+    if (error) {
+      setNicknameMessage('Не удалось сохранить никнейм.');
+    } else {
+      await supabase
+        .from('infinite_leaderboard')
+        .update({ nickname: nextNickname, updated_at: new Date().toISOString() })
+        .eq('user_id', session.user.id);
+      if (screen === 'leaderboard') {
+        void loadLeaderboard(leaderboardMode);
+      }
+      setNicknameMessage('Никнейм сохранён.');
+      window.setTimeout(() => setNicknameMessage(''), 1800);
+    }
+  }, [leaderboardMode, loadLeaderboard, nickname, screen, session]);
+
+  const saveLeaderboardResult = useCallback(
+    async (mode: Mode, seconds: number) => {
+      if (!session || !supabase) return;
+      const roundedSeconds = Math.round(seconds);
+      if (roundedSeconds <= 0) return;
+
+      const nextNickname = visibleNickname.trim().slice(0, 24);
+      if (!nextNickname) return;
+
+      const { data } = await supabase
+        .from('infinite_leaderboard')
+        .select('seconds')
+        .eq('user_id', session.user.id)
+        .eq('mode', mode)
+        .maybeSingle();
+      if ((data?.seconds ?? 0) >= roundedSeconds) return;
+
+      const { error } = await supabase.from('infinite_leaderboard').upsert(
+        {
+          user_id: session.user.id,
+          mode,
+          nickname: nextNickname,
+          seconds: roundedSeconds,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,mode' },
+      );
+
+      if (error) {
+        console.warn('Не удалось сохранить результат в лидерборд:', error.message);
+      } else if (mode === leaderboardMode) {
+        void loadLeaderboard(mode);
+      }
+    },
+    [leaderboardMode, loadLeaderboard, session, visibleNickname],
+  );
 
   const getAudioContext = useCallback(() => {
     const AudioContextConstructor =
@@ -3304,6 +3456,9 @@ export default function App() {
       await supabase.auth.signOut();
     }
     setSession(null);
+    setNickname('');
+    setNicknameMessage('');
+    setLeaderboardEntries([]);
     closeAuth();
     setScreen('home');
   };
@@ -3317,6 +3472,7 @@ export default function App() {
       if (saveProgress && infiniteMode) {
         const saved = saveInfiniteRecord(choice.mode, progress);
         setInfiniteRecords((current) => ({ ...current, [infiniteRecordKey(choice.mode)]: saved }));
+        void saveLeaderboardResult(choice.mode, progress);
       } else if (saveProgress && !tutorialMode) {
         const saved = saveRecord(choice, completed ? 100 : progress);
         setRecords((current) => ({ ...current, [recordKey(choice)]: saved }));
@@ -3334,7 +3490,7 @@ export default function App() {
       setTutorialLevel(null);
       setScreen('result');
     },
-    [choice, infiniteMode, tutorialMode],
+    [choice, infiniteMode, saveLeaderboardResult, tutorialMode],
   );
 
   const resetRunState = () => {
@@ -4160,6 +4316,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (session) {
+      void loadAccountNickname(session.user);
+    } else {
+      setNickname('');
+      setNicknameMessage('');
+    }
+  }, [loadAccountNickname, session]);
+
+  useEffect(() => {
     const isInteractiveTarget = (target: EventTarget | null) =>
       target instanceof Element && Boolean(target.closest('button, input, select, textarea, a'));
     const isControlKey = (event: KeyboardEvent) => CONTROL_KEYS.has(event.code);
@@ -4733,7 +4898,7 @@ export default function App() {
             <p className="eyebrow">BeatShift</p>
           </div>
           <div className="menu-account-row">
-            <span>{session ? userEmail : 'Гость'}</span>
+            <span>{session ? `${visibleNickname} · ${userEmail}` : 'Гость'}</span>
             {session && (
               <button className="menu-account-button" onClick={signOut} type="button">
                 Выйти
@@ -4766,6 +4931,27 @@ export default function App() {
           >
             ♪
           </button>
+          {session && (
+            <label className="menu-nickname-row">
+              <span>Никнейм</span>
+              <input
+                maxLength={24}
+                onBlur={updateNickname}
+                onChange={(event) => {
+                  setNickname(event.target.value);
+                  setNicknameMessage('');
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.currentTarget.blur();
+                  }
+                }}
+                placeholder="Твой никнейм"
+                value={nickname}
+              />
+              {nicknameMessage && <small>{nicknameMessage}</small>}
+            </label>
+          )}
           <button className="menu-button menu-back-button" onClick={() => setScreen('levelSelect')} type="button">
             Назад
           </button>
@@ -4870,6 +5056,27 @@ export default function App() {
           >
             <span>Бесконечные рекорды</span>
             <small>Время в секундах</small>
+          </button>
+
+          <button
+            aria-label="Лидерборд бесконечного уровня"
+            className="menu-button leaderboard-menu-button"
+            onClick={() => {
+              setModePickerOpen(false);
+              setSpeedPickerOpen(false);
+              setDifficultyPickerOpen(false);
+              setControlsPickerOpen(false);
+              void loadLeaderboard(choice.mode);
+              setScreen('leaderboard');
+            }}
+            title="Лидерборд"
+            type="button"
+          >
+            <span className="podium-icon" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
           </button>
 
           <button
@@ -5188,6 +5395,63 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+
+            <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
+              Закрыть
+            </button>
+          </section>
+        </div>
+      )}
+
+      {screen === 'leaderboard' && (
+        <div
+          className={
+            modalClosing ? 'modal-backdrop menu-screen-backdrop modal-closing' : 'modal-backdrop menu-screen-backdrop'
+          }
+          onClick={() => closeModalWithFade(closeMenuWindow)}
+          role="presentation"
+        >
+          <section
+            className="control-panel leaderboard-panel"
+            aria-label="Лидерборд бесконечного уровня"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <p className="eyebrow">BeatShift</p>
+              <h1>Лидерборд</h1>
+            </div>
+
+            <div className="leaderboard-mode-grid" aria-label="Выбор режима лидерборда">
+              {MODES.map((mode) => (
+                <button
+                  className={leaderboardMode === mode.id ? 'leaderboard-mode active' : 'leaderboard-mode'}
+                  key={mode.id}
+                  onClick={() => void loadLeaderboard(mode.id)}
+                  type="button"
+                >
+                  <ModeTitle mode={mode.id} title={mode.title} />
+                </button>
+              ))}
+            </div>
+
+            <div className="leaderboard-list">
+              <h2>{MODES.find((mode) => mode.id === leaderboardMode)?.title ?? 'Режим'}</h2>
+              {leaderboardLoading && <p className="leaderboard-empty">Загрузка...</p>}
+              {!leaderboardLoading && leaderboardMessage && <p className="leaderboard-empty">{leaderboardMessage}</p>}
+              {!leaderboardLoading && !leaderboardMessage && leaderboardEntries.length === 0 && (
+                <p className="leaderboard-empty">Пока нет результатов.</p>
+              )}
+              {!leaderboardLoading &&
+                !leaderboardMessage &&
+                leaderboardEntries.map((entry, index) => (
+                  <div className="leaderboard-row" key={entry.id}>
+                    <span>
+                      {index + 1}. {entry.nickname}
+                    </span>
+                    <strong>{formatDuration(entry.seconds)}</strong>
+                  </div>
+                ))}
             </div>
 
             <button className="menu-button" onClick={() => closeModalWithFade(closeMenuWindow)} type="button">
