@@ -2324,9 +2324,11 @@ function drawGame(
     const spawnDistance = obstacle.kind === 'saw' ? 88 : clamp(obstacle.height * 0.72, 64, 190);
     const animatedX = screenX;
     const animatedY = obstacle.y + (1 - appearEase) * (fromCeiling ? -spawnDistance : spawnDistance);
-    const localBeatPhase = (((elapsed + obstacle.x * 0.42) % BEAT_INTERVAL_MS) + BEAT_INTERVAL_MS) / BEAT_INTERVAL_MS;
-    const localBeatPulse = Math.max(0, 1 - localBeatPhase) ** 1.85;
-    const beatScale = 1 + localBeatPulse * 0.12;
+    const localBeatPhase = (((elapsed + obstacle.x * 0.08) % BEAT_INTERVAL_MS) + BEAT_INTERVAL_MS) / BEAT_INTERVAL_MS;
+    const localBeatPulse = Math.max(beatPulse * 0.82, Math.max(0, 1 - localBeatPhase) ** 1.55);
+    const beatScale = 1 + localBeatPulse * 0.2;
+    const obstacleGlow = 10 + localBeatPulse * 26;
+    const beatStrokeAlpha = 0.38 + localBeatPulse * 0.42;
     const scale = (0.92 + appearEase * 0.08) * beatScale;
     ctx.save();
     ctx.globalAlpha *= appearEase;
@@ -2347,11 +2349,11 @@ function drawGame(
       ctx.closePath();
       ctx.fillStyle = obstacle.color;
       ctx.shadowColor = obstacle.color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = obstacleGlow;
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,255,255,0.48)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,255,255,${beatStrokeAlpha})`;
+      ctx.lineWidth = 2 + localBeatPulse * 1.6;
       ctx.stroke();
       ctx.restore();
       ctx.restore();
@@ -2381,12 +2383,12 @@ function drawGame(
       }
       ctx.closePath();
       ctx.fillStyle = obstacle.color;
-      ctx.shadowColor = '#ffffff';
-      ctx.shadowBlur = 8;
+      ctx.shadowColor = obstacle.color;
+      ctx.shadowBlur = obstacleGlow;
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,255,255,${0.58 + localBeatPulse * 0.32})`;
+      ctx.lineWidth = 2 + localBeatPulse * 1.4;
       ctx.stroke();
       ctx.beginPath();
       ctx.fillStyle = '#111827';
@@ -2411,11 +2413,11 @@ function drawGame(
       ctx.translate(-centerX, -centerY);
       ctx.fillStyle = obstacle.color;
       ctx.shadowColor = obstacle.color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = obstacleGlow;
       ctx.fillRect(animatedX, animatedY, obstacle.width, obstacle.height);
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,255,255,0.44)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,255,255,${beatStrokeAlpha})`;
+      ctx.lineWidth = 2 + localBeatPulse * 1.4;
       ctx.strokeRect(animatedX + 1, animatedY + 1, obstacle.width - 2, obstacle.height - 2);
       ctx.fillStyle = '#d9e2ec';
       for (let index = 0; index < toothCount; index += 1) {
@@ -2445,9 +2447,12 @@ function drawGame(
     ctx.scale(scale, scale);
     ctx.translate(-centerX, -centerY);
     ctx.fillStyle = obstacle.color;
+    ctx.shadowColor = obstacle.color;
+    ctx.shadowBlur = obstacleGlow;
     ctx.fillRect(animatedX, animatedY, obstacle.width, obstacle.height);
-    ctx.strokeStyle = 'rgba(255,255,255,0.38)';
-    ctx.lineWidth = 2;
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = `rgba(255,255,255,${0.34 + localBeatPulse * 0.44})`;
+    ctx.lineWidth = 2 + localBeatPulse * 1.4;
     ctx.strokeRect(animatedX + 1, animatedY + 1, obstacle.width - 2, obstacle.height - 2);
     ctx.restore();
     ctx.restore();
