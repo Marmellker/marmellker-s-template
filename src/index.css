@@ -1875,6 +1875,7 @@ h1 {
   width: min(860px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   animation: modalPopIn 220ms ease both;
 }
 
@@ -2534,6 +2535,40 @@ h1 {
 
   .records-mode-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (pointer: coarse) {
+  .game-shell.menu,
+  .game-shell.records {
+    align-content: start;
+    justify-content: stretch;
+    place-items: start center;
+    min-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .game-shell.menu {
+    padding-block: 16px;
+  }
+
+  .game-shell.menu::before,
+  .game-shell.records::before {
+    content: '';
+    min-height: 1px;
+  }
+
+  .game-shell.menu .menu-panel,
+  .game-shell.records .records-panel {
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .game-shell.records .records-panel {
+    max-height: none;
   }
 }
 
