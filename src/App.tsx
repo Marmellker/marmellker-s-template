@@ -6017,6 +6017,7 @@ export default function App() {
         >
           <div className="menu-title">
             <p className="eyebrow">BeatShift</p>
+            <span className="menu-subtitle">Кастом</span>
           </div>
           <div className="menu-account-row">
             <span>{session ? `${visibleNickname} · ${userEmail}` : 'Гость'}</span>

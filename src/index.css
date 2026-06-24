@@ -771,6 +771,14 @@ canvas {
   text-align: center;
 }
 
+.menu-subtitle {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 900;
+}
+
 .menu-panel > * {
   animation: menuItemIn 320ms ease both;
 }
