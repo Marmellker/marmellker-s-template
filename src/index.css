@@ -2850,10 +2850,6 @@ h1 {
     line-height: 1.35;
   }
 
-  .orientation-lock-overlay .menu-button {
-    width: min(260px, 100%);
-    min-height: 46px;
-  }
 }
 
 @media (max-width: 560px) {

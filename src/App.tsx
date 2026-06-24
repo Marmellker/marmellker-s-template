@@ -5954,9 +5954,6 @@ export default function App() {
           <div className="orientation-lock-overlay" role="status" aria-live="polite">
             <strong>Поверните телефон</strong>
             <span>Игра работает только в горизонтальном режиме</span>
-            <button className="menu-button" onClick={openFullscreen} type="button">
-              Во весь экран
-            </button>
           </div>
           {screen === 'playing' && practiceMode && (
             <div className="practice-panel" aria-label="Практика">
@@ -7028,9 +7025,6 @@ export default function App() {
           <div className="orientation-lock-overlay result-orientation-overlay" role="status" aria-live="polite">
             <strong>Поверните телефон</strong>
             <span>Игра работает только в горизонтальном режиме</span>
-            <button className="menu-button" onClick={openFullscreen} type="button">
-              Во весь экран
-            </button>
           </div>
         </section>
       )}
