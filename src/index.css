@@ -2734,19 +2734,25 @@ h1 {
 }
 
 @media (pointer: coarse) {
-  .game-shell.records {
+  .game-shell.records,
+  .game-shell.rank {
     align-content: start;
     justify-content: stretch;
     place-items: start center;
-    min-height: auto;
-    overflow: visible;
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow-y: auto;
     padding-block: 16px 28px;
-    touch-action: auto;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .game-shell.records .records-panel {
+  .game-shell.records .records-panel,
+  .game-shell.rank .rank-panel {
+    width: min(100%, calc(100vw - 24px));
     max-height: none;
-    touch-action: auto;
+    margin-block: 0;
+    touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
   }
 }
