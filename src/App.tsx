@@ -4558,8 +4558,50 @@ export default function App() {
     playSound('respawn');
   };
 
+  const requestFullscreenFor = (target: HTMLElement) => {
+    const fullscreenTarget = target as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+      msRequestFullscreen?: () => Promise<void> | void;
+    };
+    const request =
+      fullscreenTarget.requestFullscreen ??
+      fullscreenTarget.webkitRequestFullscreen ??
+      fullscreenTarget.msRequestFullscreen;
+
+    if (!request) return Promise.resolve();
+
+    try {
+      return Promise.resolve(request.call(fullscreenTarget)).catch(() => undefined);
+    } catch {
+      return Promise.resolve();
+    }
+  };
+
+  const requestMobileLandscape = () => {
+    const isMobileLike = window.matchMedia('(pointer: coarse), (max-width: 820px)').matches;
+    if (!isMobileLike) return;
+
+    const target = stageRef.current ?? document.documentElement;
+    void requestFullscreenFor(target).then(() => {
+      const orientation = window.screen.orientation as ScreenOrientation & {
+        lock?: (orientation: 'landscape') => Promise<void>;
+      };
+      void orientation.lock?.('landscape').catch(() => undefined);
+    });
+  };
+
+  const releaseMobileLandscape = () => {
+    const orientation = window.screen.orientation as ScreenOrientation & { unlock?: () => void };
+    try {
+      orientation.unlock?.();
+    } catch {
+      // Some browsers throw when orientation was not locked.
+    }
+  };
+
   const startRun = () => {
     playSound('start');
+    requestMobileLandscape();
     clearPausedRun();
     setInfiniteMode(false);
     setInfiniteLevel(null);
@@ -4604,6 +4646,7 @@ export default function App() {
 
   const startTutorial = (mode: Mode) => {
     playSound('start');
+    requestMobileLandscape();
     const nextChoice: Choice = { mode, difficulty: 'easy' };
     const nextLevel = buildTutorialLevel(mode);
     clearPausedRun();
@@ -4656,6 +4699,7 @@ export default function App() {
   const startInfiniteRun = async (modeOverride?: Mode) => {
     if (infiniteLoading) return;
     playSound('start');
+    requestMobileLandscape();
     setGuestInfiniteNoticeOpen(false);
     setInfiniteLoading(true);
     const infiniteChoice: Choice = { mode: modeOverride ?? choice.mode, difficulty: 'hard' };
@@ -4751,47 +4795,12 @@ export default function App() {
 
   const openFullscreen = () => {
     playSound('click');
-    const target = stageRef.current ?? document.documentElement;
-    const fullscreenTarget = target as HTMLElement & {
-      webkitRequestFullscreen?: () => Promise<void> | void;
-      msRequestFullscreen?: () => Promise<void> | void;
-    };
-    const documentTarget = document.documentElement as HTMLElement & {
-      webkitRequestFullscreen?: () => Promise<void> | void;
-      msRequestFullscreen?: () => Promise<void> | void;
-    };
-
-    const request =
-      fullscreenTarget.requestFullscreen ??
-      fullscreenTarget.webkitRequestFullscreen ??
-      fullscreenTarget.msRequestFullscreen;
-    const fallbackRequest =
-      documentTarget.requestFullscreen ??
-      documentTarget.webkitRequestFullscreen ??
-      documentTarget.msRequestFullscreen;
-
-    try {
-      const result = request ? request.call(fullscreenTarget) : fallbackRequest?.call(documentTarget);
-      if (result && typeof result.catch === 'function') {
-        void result.catch(() => {
-          try {
-            void fallbackRequest?.call(documentTarget);
-          } catch {
-            // Some mobile browsers only allow fullscreen for video elements.
-          }
-        });
-      }
-    } catch {
-      try {
-        void fallbackRequest?.call(documentTarget);
-      } catch {
-        // Fullscreen is not available in this browser.
-      }
-    }
+    requestMobileLandscape();
   };
 
   const returnToMenu = () => {
     playSound('click');
+    releaseMobileLandscape();
     const targetScreen: Screen = tutorialMode || lastResult?.tutorialMode ? 'tutorialSelect' : 'menu';
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
@@ -5940,6 +5949,13 @@ export default function App() {
           <button className="fullscreen-button" aria-label="Открыть во весь экран" onClick={openFullscreen} type="button">
             ⛶
           </button>
+          <div className="orientation-lock-overlay" role="status" aria-live="polite">
+            <strong>Поверните телефон</strong>
+            <span>Игра работает только в горизонтальном режиме</span>
+            <button className="menu-button" onClick={openFullscreen} type="button">
+              Во весь экран
+            </button>
+          </div>
           {screen === 'playing' && practiceMode && (
             <div className="practice-panel" aria-label="Практика">
               <div className="practice-tool-wrap">
@@ -7004,6 +7020,13 @@ export default function App() {
             </button>
             <button className="menu-button" onClick={returnToMenu} type="button">
               Меню
+            </button>
+          </div>
+          <div className="orientation-lock-overlay result-orientation-overlay" role="status" aria-live="polite">
+            <strong>Поверните телефон</strong>
+            <span>Игра работает только в горизонтальном режиме</span>
+            <button className="menu-button" onClick={openFullscreen} type="button">
+              Во весь экран
             </button>
           </div>
         </section>

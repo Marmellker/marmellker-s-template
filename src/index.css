@@ -135,6 +135,7 @@ canvas {
   min-height: min(640px, calc(100dvh - 48px));
   align-self: center;
   overflow: hidden;
+  touch-action: pan-y;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #111827;
@@ -152,6 +153,7 @@ canvas {
   min-height: min(640px, calc(100dvh - 48px));
   aspect-ratio: auto;
   object-fit: cover;
+  touch-action: pan-y;
   transition:
     opacity 420ms ease,
     filter 420ms ease,
@@ -362,6 +364,10 @@ canvas {
 .fullscreen-button:hover {
   border-color: var(--accent);
   background: rgba(57, 208, 255, 0.16);
+}
+
+.orientation-lock-overlay {
+  display: none;
 }
 
 .pause-actions {
@@ -1827,6 +1833,7 @@ h1 {
   width: min(560px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   animation: modalPopIn 220ms ease both;
 }
 
@@ -1849,6 +1856,7 @@ h1 {
   width: min(620px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   animation: modalPopIn 220ms ease both;
 }
 
@@ -2461,13 +2469,18 @@ h1 {
   .game-shell.menu,
   .game-shell.tutorialSelect {
     grid-template-columns: 1fr;
-    align-content: center;
+    align-content: start;
+    min-height: 100dvh;
+    overflow-y: auto;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
   }
 
   .menu-panel,
   .tutorial-menu-panel {
     width: min(720px, calc(100vw - 48px));
     grid-template-columns: repeat(3, minmax(180px, 1fr));
+    touch-action: pan-y;
   }
 
   .menu-action-row {
@@ -2475,10 +2488,13 @@ h1 {
   }
 
   .menu-account-row,
-  .menu-panel > .start-button,
-  .menu-panel > .infinite-button,
   .menu-panel > .menu-button {
     grid-column: 1;
+  }
+
+  .menu-panel > .start-button,
+  .menu-panel > .infinite-button {
+    grid-column: 1 / -1;
   }
 
   .menu-panel > .controls-menu-button {
@@ -2550,7 +2566,30 @@ h1 {
   }
 
   .game-shell.menu {
+    align-content: start;
+    min-height: 100dvh;
+    overflow-y: auto;
     padding: 16px;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .game-shell.colors,
+  .game-shell.rank {
+    align-content: start;
+    justify-content: stretch;
+    place-items: start center;
+    min-height: 100dvh;
+    overflow-y: auto;
+    padding: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .game-shell.colors .colors-panel,
+  .game-shell.rank .rank-panel {
+    width: min(100%, calc(100vw - 24px));
+    max-height: none;
+    margin-block: 0;
   }
 
   .level-select-actions {
@@ -2569,11 +2608,10 @@ h1 {
   .tutorial-menu-panel {
     width: 100%;
     padding: 0;
+    touch-action: pan-y;
   }
 
   .menu-account-row,
-  .menu-panel > .start-button,
-  .menu-panel > .infinite-button,
   .menu-panel > .menu-button,
   .menu-panel > .controls-menu-button,
   .menu-panel > .menu-back-wrap,
@@ -2584,6 +2622,13 @@ h1 {
   .menu-action-row .leaderboard-menu-button,
   .menu-action-row .compact-menu-pair {
     grid-column: 1;
+  }
+
+  .menu-panel > .start-button,
+  .menu-panel > .infinite-button {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 62px;
   }
 
   .control-row {
@@ -2704,6 +2749,51 @@ h1 {
   .pause-actions .menu-button {
     min-height: 42px;
     padding: 10px 12px;
+  }
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  .game-shell.playing,
+  .game-shell.paused {
+    overflow: hidden;
+  }
+
+  .game-shell.playing .orientation-lock-overlay,
+  .game-shell.paused .orientation-lock-overlay,
+  .game-shell.result .result-orientation-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    color: var(--ink);
+    text-align: center;
+    background:
+      radial-gradient(circle at 50% 30%, rgba(57, 208, 255, 0.18), transparent 34%),
+      rgba(8, 11, 18, 0.96);
+    backdrop-filter: blur(10px);
+  }
+
+  .orientation-lock-overlay strong {
+    font-size: 28px;
+    font-weight: 900;
+  }
+
+  .orientation-lock-overlay span {
+    max-width: 280px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 900;
+    line-height: 1.35;
+  }
+
+  .orientation-lock-overlay .menu-button {
+    width: min(260px, 100%);
+    min-height: 46px;
   }
 }
 
