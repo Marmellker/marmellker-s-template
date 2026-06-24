@@ -340,32 +340,6 @@ canvas {
   font-weight: 900;
 }
 
-.fullscreen-button {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  z-index: 7;
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 8px;
-  color: var(--ink);
-  background: rgba(10, 15, 27, 0.72);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
-  font-size: 22px;
-  font-weight: 900;
-  line-height: 1;
-  backdrop-filter: blur(14px);
-}
-
-.fullscreen-button:hover {
-  border-color: var(--accent);
-  background: rgba(57, 208, 255, 0.16);
-}
-
 .orientation-lock-overlay {
   display: none;
 }

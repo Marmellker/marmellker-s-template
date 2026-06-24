@@ -4793,11 +4793,6 @@ export default function App() {
     setScreen('playing');
   };
 
-  const openFullscreen = () => {
-    playSound('click');
-    requestMobileLandscape();
-  };
-
   const returnToMenu = () => {
     playSound('click');
     releaseMobileLandscape();
@@ -5948,9 +5943,6 @@ export default function App() {
               Пауза
             </button>
           )}
-          <button className="fullscreen-button" aria-label="Открыть во весь экран" onClick={openFullscreen} type="button">
-            ⛶
-          </button>
           <div className="orientation-lock-overlay" role="status" aria-live="polite">
             <strong>Поверните телефон</strong>
             <span>Игра работает только в горизонтальном режиме</span>
