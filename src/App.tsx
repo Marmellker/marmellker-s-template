@@ -1630,6 +1630,7 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
 
   for (let x = 920; x < levelLength - 900; x += spacing) {
     const section = Math.round((x - 920) / spacing);
+    const ufoEase = !splitMode && choice.mode === 'ufo' && choice.difficulty !== 'easy';
     const mediumOrbit = !splitMode && isOrbit && choice.difficulty === 'medium';
     const mediumOrbitWideGate = mediumOrbit && section === mediumOrbitWideGateSection;
     const mediumOrbitRelief = mediumOrbit && section === mediumOrbitReliefSection;
@@ -1644,8 +1645,7 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
             : 210
           : 238;
     const normalGap = Math.max(96, 198 - difficulty.multiplier * 44 - random() * 26);
-    const hardUfoEase = choice.mode === 'ufo' && choice.difficulty === 'hard';
-    const ufoGap = normalGap + (hardUfoEase ? 34 : 24);
+    const ufoGap = normalGap + (choice.difficulty === 'hard' ? 42 : choice.difficulty === 'medium' ? 32 : 24);
     const gap = splitMode ? splitGap : isFlipWave ? flipGap : isOrbit ? orbitGap : choice.mode === 'ufo' ? ufoGap : normalGap;
     const splitWave = Math.sin(x / 980) * (choice.difficulty === 'hard' ? 40 : 30);
     const centerWave = splitMode
@@ -1659,7 +1659,11 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
         : isFlipWave
           ? Math.sin(x / 980) * 62
         : Math.sin(x / 940) * 86;
-    const centerNoise = splitMode ? (random() - 0.5) * 34 : isFlipWave || isOrbit ? (random() - 0.5) * 42 : (random() - 0.5) * 110;
+    const centerNoise = splitMode
+      ? (random() - 0.5) * 34
+      : isFlipWave || isOrbit
+        ? (random() - 0.5) * 42
+        : (random() - 0.5) * (ufoEase ? 84 : 110);
     const center = (splitMode ? PLAYER_CENTER_Y : HEIGHT / 2) + centerWave + centerNoise;
     const topHeight = Math.max(60, center - gap / 2);
     const bottomY = Math.min(HEIGHT - 74, center + gap / 2);
@@ -1703,14 +1707,15 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     const skipHardUfoSpikeCover =
       choice.mode === 'ufo' && choice.difficulty === 'hard' && hardUfoSpikeCoverSections.has(section);
     const centerBlockEligible = !splitMode && !isFlipWave && !isOrbit && choice.difficulty !== 'easy';
-    const shouldAddCenterBlock = centerBlockEligible ? random() > (hardUfoEase ? 0.54 : 0.42) : false;
+    const ufoCenterBlockThreshold = choice.difficulty === 'hard' ? 0.62 : 0.52;
+    const shouldAddCenterBlock = centerBlockEligible ? random() > (ufoEase ? ufoCenterBlockThreshold : 0.42) : false;
     const centerBlockY = shouldAddCenterBlock ? 170 + random() * 190 : 0;
-    const centerBlockHeight = shouldAddCenterBlock ? 46 + random() * 50 : 0;
+    const centerBlockHeight = shouldAddCenterBlock ? 46 + random() * (ufoEase ? 36 : 50) : 0;
     if (centerBlockEligible && !skipHardUfoSpikeCover && shouldAddCenterBlock) {
       obstacles.push({
         x: x + spacing * 0.52,
         y: centerBlockY,
-        width: width * 0.82,
+        width: width * (ufoEase ? 0.72 : 0.82),
         height: centerBlockHeight,
         color: '#3d2c8d',
       });
@@ -1752,9 +1757,13 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     }
 
     const shouldAddSaw =
-      mediumOrbitRelief || random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : hardUfoEase ? 0.48 : 0.38);
+      mediumOrbitRelief || random() > (splitMode ? 0.62 : mediumOrbit ? 0.5 : isFlipWave || isOrbit ? 0.72 : ufoEase ? 0.56 : 0.38);
     if (shouldAddSaw) {
-      const sawSize = splitMode ? 34 + difficulty.multiplier * 4 : isFlipWave || isOrbit ? 34 + difficulty.multiplier * 5 : 42 + difficulty.multiplier * 8;
+      const sawSize = splitMode
+        ? 34 + difficulty.multiplier * 4
+        : isFlipWave || isOrbit
+          ? 34 + difficulty.multiplier * 5
+          : 42 + difficulty.multiplier * 8 - (ufoEase ? 6 : 0);
       const sawX = mediumOrbitRelief ? x + spacing * 0.52 : x + spacing * (0.46 + random() * 0.22);
       const sawY = mediumOrbitRelief
         ? clamp(center + 78, PLAYER_MIN_Y + 20, PLAYER_MAX_Y - sawSize - 12)
@@ -1774,7 +1783,7 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
     }
 
     const shouldAddSpikedBlock =
-      mediumOrbitRelief || random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : choice.difficulty === 'easy' ? 0.7 : 0.48);
+      mediumOrbitRelief || random() > (splitMode ? 0.78 : mediumOrbit ? 0.56 : isFlipWave || isOrbit ? 0.78 : ufoEase ? 0.58 : choice.difficulty === 'easy' ? 0.7 : 0.48);
     if (shouldAddSpikedBlock) {
       const spikedBlockX = mediumOrbitRelief ? x + spacing * 0.84 : x + spacing * (0.3 + random() * 0.35);
       const spikedBlockY = mediumOrbitRelief
@@ -1788,8 +1797,8 @@ function buildLevel(choice: Choice, speedMode: SpeedMode, splitMode: boolean): L
         kind: 'spikedBlock',
         x: spikedBlockX,
         y: spikedBlockY,
-        width: splitMode ? 42 : isFlipWave || isOrbit ? 42 + difficulty.multiplier * 6 : 52 + difficulty.multiplier * 8,
-        height: splitMode ? 42 : isFlipWave || isOrbit ? 40 + difficulty.multiplier * 6 : 46 + difficulty.multiplier * 8,
+        width: splitMode ? 42 : isFlipWave || isOrbit ? 42 + difficulty.multiplier * 6 : 52 + difficulty.multiplier * 8 - (ufoEase ? 8 : 0),
+        height: splitMode ? 42 : isFlipWave || isOrbit ? 40 + difficulty.multiplier * 6 : 46 + difficulty.multiplier * 8 - (ufoEase ? 8 : 0),
         color: '#6842c2',
       });
     }
