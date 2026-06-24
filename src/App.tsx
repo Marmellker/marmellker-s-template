@@ -5354,6 +5354,7 @@ export default function App() {
       inputRef.current = false;
     };
     const activatePointer = (event: PointerEvent | TouchEvent) => {
+      if (screenRef.current !== 'playing' && screenRef.current !== 'paused') return;
       if (isInteractiveTarget(event.target)) return;
       event.preventDefault();
       if (!inputRef.current) {
@@ -5362,6 +5363,7 @@ export default function App() {
       inputRef.current = true;
     };
     const releasePointer = (event: PointerEvent | TouchEvent) => {
+      if (screenRef.current !== 'playing' && screenRef.current !== 'paused') return;
       if (isInteractiveTarget(event.target)) return;
       event.preventDefault();
       inputRef.current = false;
