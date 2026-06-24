@@ -205,6 +205,7 @@ type CustomTutorialStep = {
 
 type QuestSave = {
   date: string;
+  version?: string;
   quests: Quest[];
 };
 
@@ -605,6 +606,7 @@ const QUEST_REWARDS: Record<QuestDifficulty, number> = {
   medium: 100,
   hard: 150,
 };
+const QUEST_ROTATION_VERSION = '2026-06-24-refresh-1';
 const ALMATY_UTC_OFFSET_HOURS = 5;
 const QUEST_REFRESH_HOUR_ALMATY = 13;
 
@@ -954,12 +956,12 @@ function pickQuestCandidate(candidates: Quest[], blockedIds: Set<string>, random
   return variants[Math.floor(random() * variants.length)] ?? candidates[0];
 }
 
+function questSeed(text: string) {
+  return text.split('').reduce((seed, letter) => seed * 31 + letter.charCodeAt(0), 17);
+}
+
 function generateQuestSet(dateKey = getQuestDateKey(), previousQuests: Quest[] = []): Quest[] {
-  const random = seededRandom(
-    dateKey
-      .split('-')
-      .reduce((seed, part) => seed * 31 + Number(part), 17),
-  );
+  const random = seededRandom(questSeed(`${dateKey}-${QUEST_ROTATION_VERSION}`));
   const modes = MODES.map((mode) => mode.id);
   const blockedIds = new Set(previousQuests.map((quest) => quest.id));
   const easyCandidates = modes.flatMap((mode) => [
@@ -995,7 +997,8 @@ function loadQuests(): Quest[] {
     const today = getQuestDateKey();
     const savedQuests = Array.isArray(parsed) ? parsed : parsed.quests;
     const savedDate = Array.isArray(parsed) ? '' : parsed.date;
-    if (savedDate !== today || !Array.isArray(savedQuests) || savedQuests.length !== 3) {
+    const savedVersion = Array.isArray(parsed) ? '' : parsed.version;
+    if (savedDate !== today || savedVersion !== QUEST_ROTATION_VERSION || !Array.isArray(savedQuests) || savedQuests.length !== 3) {
       const previousQuests = Array.isArray(savedQuests) && savedQuests.length === 3
         ? savedQuests
         : generateQuestSet(getPreviousQuestDateKey(today));
@@ -1017,7 +1020,7 @@ function loadQuests(): Quest[] {
 }
 
 function saveQuests(quests: Quest[]) {
-  window.localStorage.setItem(QUESTS_KEY, JSON.stringify({ date: getQuestDateKey(), quests }));
+  window.localStorage.setItem(QUESTS_KEY, JSON.stringify({ date: getQuestDateKey(), version: QUEST_ROTATION_VERSION, quests }));
 }
 
 function findPassedGateKeys(level: Level, worldX: number) {
