@@ -912,6 +912,13 @@ function getQuestDateKey(date = new Date()) {
   return `${almaty.getUTCFullYear()}-${almaty.getUTCMonth() + 1}-${almaty.getUTCDate()}`;
 }
 
+function getPreviousQuestDateKey(dateKey: string) {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - 1);
+  return `${date.getUTCFullYear()}-${date.getUTCMonth() + 1}-${date.getUTCDate()}`;
+}
+
 function getNextQuestRefreshTime() {
   const now = new Date();
   const almaty = getAlmatyDate(now);
@@ -941,19 +948,37 @@ function formatRefreshCountdown(ms: number) {
   return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
-function generateQuestSet(): Quest[] {
+function pickQuestCandidate(candidates: Quest[], blockedIds: Set<string>, random: () => number) {
+  const available = candidates.filter((quest) => !blockedIds.has(quest.id));
+  const variants = available.length > 0 ? available : candidates;
+  return variants[Math.floor(random() * variants.length)] ?? candidates[0];
+}
+
+function generateQuestSet(dateKey = getQuestDateKey(), previousQuests: Quest[] = []): Quest[] {
   const random = seededRandom(
-    getQuestDateKey()
+    dateKey
       .split('-')
       .reduce((seed, part) => seed * 31 + Number(part), 17),
   );
   const modes = MODES.map((mode) => mode.id);
-  const easyMode = modes[Math.floor(random() * modes.length)];
-  const hardMode = modes[Math.floor(random() * modes.length)];
+  const blockedIds = new Set(previousQuests.map((quest) => quest.id));
+  const easyCandidates = modes.flatMap((mode) => [
+    buildQuest('easy', 'survive', 60, mode),
+    buildQuest('easy', 'survive', 90, mode),
+  ]);
+  const mediumCandidates = [
+    buildQuest('medium', 'cumulative', 360),
+    buildQuest('medium', 'cumulative', 420),
+  ];
+  const hardCandidates = modes.flatMap((mode) => [
+    buildQuest('hard', 'obstacles', 50, mode),
+    buildQuest('hard', 'obstacles', 65, mode),
+  ]);
+
   return [
-    buildQuest('easy', 'survive', random() > 0.5 ? 60 : 90, easyMode),
-    buildQuest('medium', 'cumulative', random() > 0.5 ? 420 : 360),
-    buildQuest('hard', 'obstacles', random() > 0.5 ? 50 : 65, hardMode),
+    pickQuestCandidate(easyCandidates, blockedIds, random),
+    pickQuestCandidate(mediumCandidates, blockedIds, random),
+    pickQuestCandidate(hardCandidates, blockedIds, random),
   ];
 }
 
@@ -961,7 +986,8 @@ function loadQuests(): Quest[] {
   try {
     const saved = window.localStorage.getItem(QUESTS_KEY);
     if (!saved) {
-      const generated = generateQuestSet();
+      const today = getQuestDateKey();
+      const generated = generateQuestSet(today, generateQuestSet(getPreviousQuestDateKey(today)));
       saveQuests(generated);
       return generated;
     }
@@ -970,18 +996,23 @@ function loadQuests(): Quest[] {
     const savedQuests = Array.isArray(parsed) ? parsed : parsed.quests;
     const savedDate = Array.isArray(parsed) ? '' : parsed.date;
     if (savedDate !== today || !Array.isArray(savedQuests) || savedQuests.length !== 3) {
-      const generated = generateQuestSet();
+      const previousQuests = Array.isArray(savedQuests) && savedQuests.length === 3
+        ? savedQuests
+        : generateQuestSet(getPreviousQuestDateKey(today));
+      const generated = generateQuestSet(today, previousQuests);
       saveQuests(generated);
       return generated;
     }
+    const defaults = generateQuestSet(today, generateQuestSet(getPreviousQuestDateKey(today)));
     return savedQuests.map((quest, index) => ({
-      ...generateQuestSet()[index],
+      ...defaults[index],
       ...quest,
       progress: Math.max(0, Number(quest.progress) || 0),
       completed: Boolean(quest.completed),
     }));
   } catch {
-    return generateQuestSet();
+    const today = getQuestDateKey();
+    return generateQuestSet(today, generateQuestSet(getPreviousQuestDateKey(today)));
   }
 }
 
